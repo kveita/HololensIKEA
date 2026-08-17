@@ -157,13 +157,13 @@ def main():
     resolved, missing = resolve_to_local_paths(canonical)
     print(f"  Resolved: {len(resolved)}   Missing: {len(missing)}")
     if missing:
-        print("\nWARNING — could not resolve:")
+        print("\nWARNING - could not resolve:")
         for n, p in missing:
             print(f"  {n}  (from {p})")
 
     print(f"\nUpdating {CSPROJ_PATH} ...")
     update_csproj(resolved)
-    print(f"Done — {len(resolved)} <Reference> entries written.\n")
+    print(f"Done - {len(resolved)} <Reference> entries written.\n")
     print("Next step: re-run the build.")
     print("  msbuild HololensIKEA.csproj /p:Configuration=Release /p:Platform=x86")
 

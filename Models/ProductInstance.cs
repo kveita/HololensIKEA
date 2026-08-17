@@ -54,7 +54,7 @@ namespace HololensIKEA.Models
         /// <summary>View type classification (FrontOnly, ThreeQuarterLeft, etc.).</summary>
         public ViewType ViewType { get; set; } = ViewType.FrontOnly;
 
-        /// <summary>Parsed 3D mesh data from 3dfindit.com (null if using box renderer).</summary>
+        /// <summary>Parsed 3D mesh data from an IKEA product-page GLB (null if unavailable).</summary>
         public GltfMeshData MeshData { get; set; }
 
         /// <summary>Independent position for the 3D mesh model.</summary>

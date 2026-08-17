@@ -6,8 +6,9 @@
     via Windows.winmd; passing a conflicting facade causes a null ref crash.
   -->
   <!-- No stripping needed: real System.Runtime.dll from Framework\v4.0.30319 works with the XAML compiler -->
-  <Target Name="DiagnoseXamlReferences"
-          BeforeTargets="MarkupCompilePass1">
-    <Message Text="References passed to XAML compiler: @(ReferencePath->'%(Filename)')" Importance="high" />
+    <Target Name="DiagnoseXamlReferences"
+          BeforeTargets="MarkupCompilePass1"
+          Condition="'$(DiagnoseXamlReferences)' == 'true'">
+    <Message Text="References passed to XAML compiler: @(ReferencePath->'%(Filename)')" Importance="low" />
   </Target>
 </Project>

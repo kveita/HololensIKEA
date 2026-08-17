@@ -1,5 +1,0 @@
-﻿    <Compile Include="Models\Satellite.cs" />
-    <Compile Include="Models\TleRecord.cs" />
-    <Compile Include="Services\TleService.cs" />
-    <Compile Include="Services\Sgp4Service.cs" />
-    <Compile Include="Services\OrbitService.cs" />

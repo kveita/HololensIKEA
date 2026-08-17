@@ -34,7 +34,7 @@
         DisplayName="HololensIKEA"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png"
-        Description="HoloLens Cube Renderer"
+        Description="IKEA 3D model hologram viewer for HoloLens"
         BackgroundColor="#00B2F0">
         <uap:SplashScreen Image="Assets\SplashScreen.png" />
         <uap:DefaultTile>

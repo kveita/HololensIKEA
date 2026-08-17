@@ -115,7 +115,7 @@ namespace HololensIKEA
         private ProductSearchService           _productSearchService;
         private SearchResultsDialog            _searchResultsDialog;
 
-        // --- 3D model support (3dfindit.com) ---
+        // --- IKEA GLB model support ---
         private ModelService3D                  _modelService3D = new ModelService3D();
         private GltfMeshRenderer               _gltfMeshRenderer;
         private GltfMeshData                   _activeMeshData;
@@ -876,7 +876,7 @@ namespace HololensIKEA
                 pendingProductLoad = null;
             }
 
-            // Poll for completed 3D model load from 3dfindit.com.
+            // Poll for completed IKEA GLB model load.
             if (_pending3DModelLoad != null && _pending3DModelLoad.IsCompleted)
             {
                 if (!_pending3DModelLoad.IsFaulted && _pending3DModelLoad.Result != null)

@@ -114,10 +114,17 @@ namespace HololensIKEA.Services
                 using (var client = new HttpClient())
                 {
                     client.Timeout = TimeSpan.FromSeconds(30);
-                    imageBytes = await client.GetByteArrayAsync(url).ConfigureAwait(false);
+                    using (var request = new HttpRequestMessage(HttpMethod.Get, url))
+                    using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct).ConfigureAwait(false))
+                    {
+                        response.EnsureSuccessStatusCode();
+                        imageBytes = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+                    }
                 }
                 ct.ThrowIfCancellationRequested();
-                return await DecodeAndUploadAsync(imageBytes).ConfigureAwait(false);
+                var result = await DecodeAndUploadAsync(imageBytes).ConfigureAwait(false);
+                GetLastResult = result;
+                return result;
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)

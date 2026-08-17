@@ -24,24 +24,34 @@ namespace HololensIKEA.Services
             if (cache.TryGetValue(productPageUrl, out var cached)) return cached;
 
             var pageUri = new Uri(productPageUrl, UriKind.Absolute);
+            var host = pageUri.Host;
+            if (!(host.StartsWith("ikea.", StringComparison.OrdinalIgnoreCase) ||
+                  host.StartsWith("www.ikea.", StringComparison.OrdinalIgnoreCase)))
+                throw new ArgumentException("The URL must point to an IKEA product page.", nameof(productPageUrl));
+
             using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) })
             {
                 client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 HoloLensIKEA/1.0");
-                var html = await client.GetStringAsync(pageUri);
-                var product = new RenderableProduct
+                using (var request = new HttpRequestMessage(HttpMethod.Get, pageUri))
+                using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
                 {
-                    ProductId = productPageUrl.GetHashCode(),
-                    ProductName = ExtractTitle(html) ?? "IKEA product",
-                    // IKEA product-page dimensions are not needed for model rendering;
-                    // the GLB bounds replace these defaults when it arrives.
-                    WidthMeters = 1.0f,
-                    HeightMeters = 1.0f,
-                    DepthMeters = 1.0f,
-                    Has3DModel = ModelService3D.FindModelUrl(html, pageUri) != null,
-                    ModelUrl = productPageUrl
-                };
-                cache[productPageUrl] = product;
-                return product;
+                    response.EnsureSuccessStatusCode();
+                    var html = await response.Content.ReadAsStringAsync();
+                    var product = new RenderableProduct
+                    {
+                        ProductId = productPageUrl.GetHashCode(),
+                        ProductName = ExtractTitle(html) ?? "IKEA product",
+                        // IKEA product-page dimensions are not needed for model rendering;
+                        // the GLB bounds replace these defaults when it arrives.
+                        WidthMeters = 1.0f,
+                        HeightMeters = 1.0f,
+                        DepthMeters = 1.0f,
+                        Has3DModel = ModelService3D.FindModelUrl(html, pageUri) != null,
+                        ModelUrl = productPageUrl
+                    };
+                    cache[productPageUrl] = product;
+                    return product;
+                }
             }
         }
 

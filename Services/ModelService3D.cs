@@ -46,18 +46,29 @@ namespace HololensIKEA.Services
                     client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 HoloLensIKEA/1.0");
                     client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml");
                     var pageUri = new Uri(productPageUrl, UriKind.Absolute);
-                    var html = await client.GetStringAsync(pageUri);
-                    var modelUrl = FindModelUrl(html, pageUri);
-                    if (modelUrl == null)
+                    using (var request = new HttpRequestMessage(HttpMethod.Get, pageUri))
+                    using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct))
                     {
-                        Debug.WriteLine("[IKEA] No GLB URL found in product page HTML.");
-                        return null;
+                        response.EnsureSuccessStatusCode();
+                        var html = await response.Content.ReadAsStringAsync();
+                        var modelUrl = FindModelUrl(html, pageUri);
+                        if (modelUrl == null)
+                        {
+                            Debug.WriteLine("[IKEA] No GLB URL found in product page HTML.");
+                            return null;
+                        }
+                        Debug.WriteLine("[IKEA] Downloading GLB: " + modelUrl);
+                        using (var modelRequest = new HttpRequestMessage(HttpMethod.Get, modelUrl))
+                        using (var modelResponse = await client.SendAsync(modelRequest, HttpCompletionOption.ResponseContentRead, ct))
+                        {
+                            modelResponse.EnsureSuccessStatusCode();
+                            var bytes = await modelResponse.Content.ReadAsByteArrayAsync();
+                            return ParseGlb(bytes);
+                        }
                     }
-                    Debug.WriteLine("[IKEA] Downloading GLB: " + modelUrl);
-                    var bytes = await client.GetByteArrayAsync(modelUrl);
-                    return ParseGlb(bytes);
                 }
             }
+            catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 Debug.WriteLine("[IKEA] Model fetch failed: " + ex.Message);
@@ -145,7 +156,12 @@ namespace HololensIKEA.Services
                     foreach (var index in localIndices)
                     {
                         var absolute = (ulong)baseVertex + index;
-                        if (absolute <= ushort.MaxValue) indices.Add((ushort)absolute);
+                        if (absolute > ushort.MaxValue)
+                        {
+                            Debug.WriteLine("[IKEA] GLB mesh exceeds the renderer's 16-bit index limit.");
+                            return null;
+                        }
+                        indices.Add((ushort)absolute);
                     }
                 }
             }
