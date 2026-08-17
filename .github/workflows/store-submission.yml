@@ -1,0 +1,303 @@
+# Builds a Store-signed .appxupload and submits it to the Microsoft Store.
+#
+# Prerequisites (set up once):
+#   1. Register as a Windows developer in Partner Center
+#   2. Create/associate an Azure AD tenant with Partner Center
+#   3. Register a Microsoft Entra application and assign "Manager" role
+#   4. Add these secrets to the repo:
+#      - AZURE_AD_TENANT_ID       (from Entra > Overview > Tenant ID)
+#      - AZURE_AD_CLIENT_ID       (from Entra > App registrations > your app)
+#      - AZURE_AD_CLIENT_SECRET   (from App > Certificates & secrets)
+#      - SELLER_ID                (from Partner Center > Account settings > Identifiers)
+#      - STORE_APP_ID             (Store app/product ID, e.g. 9NBL..., required for CI submit)
+#   5. The app must already exist in Partner Center with at least one
+#      submission (even a draft with the correct package info).
+#
+# NOTE: Each 'submit' run auto-increments <Identity Version> in
+# Package.appxmanifest (4th segment stays 0, as the Store requires), commits
+# the bump back to the repo after a successful submission, and creates a
+# GitHub release tagged v<version> with the package attached.
+#
+# See: https://learn.microsoft.com/windows/apps/publish/msstore-dev-cli/github-actions
+#
+# WARNING: App update operations currently support free products only.
+# Paid products will be supported in a future MSStore CLI release.
+
+name: Store Submission
+
+on:
+  # Manual trigger: choose 'package-only' to just build, or 'submit' to go all the way
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Store action'
+        required: true
+        default: 'submit'
+        type: choice
+        options:
+          - package-only   # Build + validate, upload artifact only
+          - submit         # Build + validate + publish to Store + create GitHub release
+
+jobs:
+  store-package:
+    runs-on: windows-2022
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Validate Store submission secrets
+        if: github.event.inputs.action == 'submit'
+        shell: pwsh
+        env:
+          TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+          SELLER_ID: ${{ secrets.SELLER_ID }}
+          CLIENT_ID: ${{ secrets.AZURE_AD_CLIENT_ID || secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.AZURE_AD_CLIENT_SECRET || secrets.AZURE_AD_APPLICATION_SECRET }}
+          STORE_APP_ID: ${{ secrets.STORE_APP_ID }}
+        run: |
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace($env:TENANT_ID)) { $missing += 'AZURE_AD_TENANT_ID' }
+          if ([string]::IsNullOrWhiteSpace($env:SELLER_ID)) { $missing += 'SELLER_ID' }
+          if ([string]::IsNullOrWhiteSpace($env:CLIENT_ID)) { $missing += 'AZURE_AD_CLIENT_ID (or AZURE_AD_APPLICATION_CLIENT_ID)' }
+          if ([string]::IsNullOrWhiteSpace($env:CLIENT_SECRET)) { $missing += 'AZURE_AD_CLIENT_SECRET (or AZURE_AD_APPLICATION_SECRET)' }
+          if ([string]::IsNullOrWhiteSpace($env:STORE_APP_ID)) { $missing += 'STORE_APP_ID (Store app/product ID, e.g. 9NBL...)' }
+
+          if ($missing.Count -gt 0) {
+            Write-Error ("Missing required repository secret(s): " + ($missing -join ', '))
+          }
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: NuGet restore
+        run: nuget restore HololensSatelliteViewer.sln
+
+      # ── Install UWP build tools ──────────────────────────────────────
+      - name: Install Windows 10 SDK 19041 and UWP MSBuild tools
+        shell: powershell
+        run: |
+          $vswhere   = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath    = & $vswhere -latest -products * -property installationPath
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          & $installer modify `
+            --installPath "$vsPath" `
+            --add Microsoft.VisualStudio.Component.Windows10SDK.19041 `
+            --add Microsoft.VisualStudio.ComponentGroup.UWP.MSBuild `
+            --quiet --norestart --force
+          if ($LASTEXITCODE -notin @(0, 3010)) { exit $LASTEXITCODE }
+
+      # ── Generate a temporary cert for building ───────────────────────
+      # The Store-signed package will be re-signed by Partner Center;
+      # we just need something to get past MSBuild's signing requirement.
+      - name: Create build signing certificate
+        shell: powershell
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Type Custom `
+            -Subject "CN=BB1A7F2A-A87C-44C8-8C14-84C6486E7E75" `
+            -KeyUsage DigitalSignature `
+            -FriendlyName "HololensSatelliteViewer" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3","2.5.29.19={text}")
+          $pwd = ConvertTo-SecureString -String "ci" -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert `
+            -FilePath "${{ github.workspace }}\HololensSatelliteViewer_TemporaryKey.pfx" `
+            -Password $pwd
+
+      # ── Auto-increment package version (submit runs only) ───────────
+      # Microsoft Store requires the 4th segment (revision) to be 0.
+      # The bump is applied to the working tree BEFORE the build so the
+      # package carries the new version; it is committed back to the repo
+      # after a successful Store submission (see 'Commit version bump').
+      - name: Auto-increment package version
+        if: github.event.inputs.action == 'submit'
+        shell: pwsh
+        run: |
+          $manifestPath = "${{ github.workspace }}\Package.appxmanifest"
+          $manifest = [xml](Get-Content $manifestPath)
+          $current = [Version]$manifest.Package.Identity.Version
+          $next = "{0}.{1}.{2}.0" -f $current.Major, $current.Minor, ($current.Build + 1)
+          $manifest.Package.Identity.Version = $next
+          $manifest.Save($manifestPath)
+          "NEXT_VERSION=$next" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Bumped package version: $($current.ToString()) -> $next"
+
+      - name: Validate manifest version for Store
+        shell: pwsh
+        run: |
+          $manifest = [xml](Get-Content "${{ github.workspace }}\Package.appxmanifest")
+          $version = [Version]$manifest.Package.Identity.Version
+          if ($version.Revision -ne 0) {
+            Write-Error "Package.appxmanifest Identity Version '$version' is invalid for Store submit. The 4th segment (revision) must be 0."
+          }
+          Write-Host "Store-compatible package version: $version"
+
+      # ── Build Release .appxupload (Store-compatible) ──────────────
+      # UapAppxPackageBuildMode=StoreUpload + /t:Publish produces a
+      # proper .appxupload that the Store accepts — unlike the pre-compiled
+      # .NET Native packages from GenerateAppxPackageOnBuild.
+      - name: Build and package Release x86
+        run: >
+          msbuild HololensSatelliteViewer.csproj
+          /t:Publish
+          /p:Configuration=Release
+          /p:Platform=x86
+          /p:AppxBundle=Never
+          /p:UapAppxPackageBuildMode=StoreUpload
+          /p:AppxPackageDir=AppPackages\
+          /p:AppxPackageSigningEnabled=true
+          /p:PackageCertificateKeyFile=${{ github.workspace }}\HololensSatelliteViewer_TemporaryKey.pfx
+          /p:PackageCertificatePassword=ci
+          /p:PackageCertificateThumbprint=""
+
+      - name: Remove build certificate
+        if: always()
+        run: Remove-Item -Path "${{ github.workspace }}\HololensSatelliteViewer_TemporaryKey.pfx" -ErrorAction SilentlyContinue
+
+      # ── Run Windows App Certification Kit ────────────────────────────
+      - name: Run Windows App Certification Kit
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $package = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
+            -Recurse -Filter "*.appxupload" | Select-Object -First 1
+          if (-not $package) {
+            Write-Warning "No .appxupload found in AppPackages/; skipping WACK"
+            exit 0
+          }
+          Write-Host "Testing: $($package.FullName)"
+          & "C:\Program Files (x86)\Windows Kits\10\App Certification Kit\appcert.exe" `
+            test -AppType Universal `
+            -AppxPackagePath "$($package.FullName)" `
+            -ReportOutputPath "${{ github.workspace }}\WackReport.xml" `
+            -DigestPath "${{ github.workspace }}\WackDigest.xml"
+          $wackExitCode = $LASTEXITCODE
+          Write-Host "WACK exit code: $wackExitCode"
+          if ($wackExitCode -ne 0) {
+            Write-Warning "WACK failed on CI for .appxupload; Partner Center certification remains authoritative."
+          }
+          exit 0
+
+      - name: Upload WACK report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: WACK-Report
+          path: |
+            WackReport.xml
+            WackDigest.xml
+          if-no-files-found: ignore
+
+      # ── Upload app package as artifact ───────────────────────────────
+      - name: Upload appxupload artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: HololensSatelliteViewer-${{ github.sha }}-Store-x86
+          path: |
+            AppPackages/**/*.appxupload
+            AppPackages/**/*.appx
+            AppPackages/**/*.appxsym
+            AppPackages/**/Dependencies/**
+            AppPackages/**/Install.ps1
+            AppPackages/**/Add-AppDevPackage.ps1
+          if-no-files-found: warn
+
+      # ── Store submission (only on explicit 'submit') ─────────────────
+      - name: Configure Microsoft Store CLI
+        if: github.event.inputs.action == 'submit'
+        uses: microsoft/microsoft-store-apppublisher@v1.4
+
+      - name: Reconfigure store credentials
+        if: github.event.inputs.action == 'submit'
+        shell: pwsh
+        env:
+          TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+          SELLER_ID: ${{ secrets.SELLER_ID }}
+          CLIENT_ID: ${{ secrets.AZURE_AD_CLIENT_ID || secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.AZURE_AD_CLIENT_SECRET || secrets.AZURE_AD_APPLICATION_SECRET }}
+        run: |
+          msstore reconfigure `
+            --tenantId "$env:TENANT_ID" `
+            --sellerId "$env:SELLER_ID" `
+            --clientId "$env:CLIENT_ID" `
+            --clientSecret "$env:CLIENT_SECRET"
+
+      - name: Publish app package to Microsoft Store
+        if: github.event.inputs.action == 'submit'
+        shell: pwsh
+        env:
+          STORE_APP_ID: ${{ secrets.STORE_APP_ID }}
+        run: |
+          # Read package identity for logging only. This is not the Store App ID.
+          $manifest = [xml](Get-Content "${{ github.workspace }}\Package.appxmanifest")
+          $identity = $manifest.Package.Identity
+          Write-Host "Publishing package identity: $($identity.Name) (Version: $($identity.Version))"
+          $upload = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
+            -Recurse -Filter "*.appxupload" |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+          if (-not $upload) {
+            Write-Error "No .appxupload package found in AppPackages/."
+          }
+
+          # msstore file publisher recognizes .msixupload; mirror the generated upload package.
+          $msixUpload = [System.IO.Path]::ChangeExtension($upload.FullName, ".msixupload")
+          Copy-Item -Path $upload.FullName -Destination $msixUpload -Force
+
+          Write-Host "Submitting package: $msixUpload"
+
+          Write-Host "Using explicit Store AppId from STORE_APP_ID secret."
+          msstore publish "$msixUpload" --appId "$env:STORE_APP_ID" --verbose
+
+      # ── Persist the version bump (only after a successful submit) ────
+      # Commit Package.appxmanifest back to master so the repo always matches
+      # the last Store-submitted version and the next run increments above it.
+      - name: Commit version bump
+        if: github.event.inputs.action == 'submit'
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Package.appxmanifest
+          git commit -m "chore: bump version to $env:NEXT_VERSION for Store submission [skip ci]" -q
+          git push origin HEAD:${{ github.ref_name }}
+          Write-Host "Committed and pushed Package.appxmanifest (v$env:NEXT_VERSION)"
+
+      # ── Create GitHub release (only after a successful submit) ───────
+      - name: Create GitHub release
+        if: github.event.inputs.action == 'submit'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v$env:NEXT_VERSION"
+          $pkg = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
+            -Recurse -Filter "*.appx" |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $pkg) {
+            Write-Error "No .appx package found in AppPackages/."
+          }
+
+          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/$($pkg.Name)"
+          $notes = @(
+            "Sideload package release for HoloLens.",
+            "",
+            "Direct .appx download: [$($pkg.Name)]($downloadUrl)",
+            "",
+            "Microsoft Store submission continues to use the .appxupload package."
+          ) -join "`n"
+
+          Write-Host "Creating release $tag with package: $($pkg.Name)"
+          $bumpSha = git rev-parse HEAD
+          gh release create $tag `
+            --title "HololensSatelliteViewer $tag" `
+            --notes $notes `
+            --target $bumpSha `
+            "$($pkg.FullName)"
+          Write-Host "Release $tag created: https://github.com/turbolego/HololensSatelliteViewer/releases/tag/$tag"

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!--
+    Strip System.Runtime (facade) from the reference list that gets passed to
+    the XAML MarkupCompilePass1 task. The XAML compiler resolves it internally
+    via Windows.winmd; passing a conflicting facade causes a null ref crash.
+  -->
+  <!-- No stripping needed: real System.Runtime.dll from Framework\v4.0.30319 works with the XAML compiler -->
+  <Target Name="DiagnoseXamlReferences"
+          BeforeTargets="MarkupCompilePass1">
+    <Message Text="References passed to XAML compiler: @(ReferencePath->'%(Filename)')" Importance="high" />
+  </Target>
+</Project>

@@ -1,0 +1,50 @@
+# Compile check: verifies the UWP project builds on both configurations.
+# Packaging and signing are disabled so no certificate is required.
+# For the signed .appx artifact see dotnet-desktop.yml.
+
+name: UWP Build
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: NuGet restore
+        run: nuget restore HololensSatelliteViewer.sln
+
+      - name: Install Windows 10 SDK 19041 and UWP MSBuild tools
+        shell: powershell
+        run: |
+          $vswhere   = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath    = & $vswhere -latest -products * -property installationPath
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          & $installer modify `
+            --installPath "$vsPath" `
+            --add Microsoft.VisualStudio.Component.Windows10SDK.19041 `
+            --add Microsoft.VisualStudio.ComponentGroup.UWP.MSBuild `
+            --quiet --norestart --force
+          if ($LASTEXITCODE -notin @(0, 3010)) { exit $LASTEXITCODE }
+
+      - name: Build ${{ matrix.configuration }} | x86
+        run: >
+          msbuild HololensSatelliteViewer.csproj /m
+          /p:Configuration=${{ matrix.configuration }}
+          /p:Platform=x86
+          /p:AppxPackageSigningEnabled=false
+          /p:GenerateAppxPackageOnBuild=false

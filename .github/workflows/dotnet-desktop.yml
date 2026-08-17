@@ -1,0 +1,89 @@
+# Builds a signed Release .appxupload and uploads it as a workflow artifact.
+# Runs on every push to master (not on pull-requests).
+# No secrets required: a fresh self-signed certificate is generated per run.
+# For Store submission see store-submission.yml.
+#
+# To sideload: download the artifact and deploy via WinAppDeployCmd or Device Portal.
+
+name: UWP Package
+
+on:
+  push:
+    branches: [ "master" ]
+
+jobs:
+  package:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: NuGet restore
+        run: nuget restore HololensSatelliteViewer.sln
+
+      - name: Install Windows 10 SDK 19041 and UWP MSBuild tools
+        shell: powershell
+        run: |
+          $vswhere   = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath    = & $vswhere -latest -products * -property installationPath
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          & $installer modify `
+            --installPath "$vsPath" `
+            --add Microsoft.VisualStudio.Component.Windows10SDK.19041 `
+            --add Microsoft.VisualStudio.ComponentGroup.UWP.MSBuild `
+            --quiet --norestart --force
+          if ($LASTEXITCODE -notin @(0, 3010)) { exit $LASTEXITCODE }
+
+      # Generate a throw-away self-signed cert for this run.
+      # The password "ci" overrides the <PackageCertificatePassword> in the .csproj.
+      - name: Create signing certificate
+        shell: powershell
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Type Custom `
+            -Subject "CN=BB1A7F2A-A87C-44C8-8C14-84C6486E7E75" `
+            -KeyUsage DigitalSignature `
+            -FriendlyName "HololensSatelliteViewer" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3","2.5.29.19={text}")
+          $pwd = ConvertTo-SecureString -String "ci" -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert `
+            -FilePath "${{ github.workspace }}\HololensSatelliteViewer_TemporaryKey.pfx" `
+            -Password $pwd
+
+      - name: Build and package Release x86
+        run: >
+          msbuild HololensSatelliteViewer.csproj
+          /t:Publish
+          /p:Configuration=Release
+          /p:Platform=x86
+          /p:AppxBundle=Never
+          /p:UapAppxPackageBuildMode=StoreUpload
+          /p:AppxPackageDir=AppPackages\
+          /p:AppxPackageSigningEnabled=true
+          /p:PackageCertificateKeyFile=${{ github.workspace }}\HololensSatelliteViewer_TemporaryKey.pfx
+          /p:PackageCertificatePassword=ci
+          /p:PackageCertificateThumbprint=""
+
+      # Remove the cert from the workspace before the artifact is captured
+      - name: Remove signing certificate
+        if: always()
+        run: Remove-Item -Path "${{ github.workspace }}\HololensSatelliteViewer_TemporaryKey.pfx" -ErrorAction SilentlyContinue
+
+      - name: Upload appx artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: HololensSatelliteViewer-${{ github.sha }}-Release-x86
+          path: |
+            AppPackages/**/*.appxupload
+            AppPackages/**/*.appx
+            AppPackages/**/*.appxsym
+            AppPackages/**/Dependencies/**
+            AppPackages/**/Install.ps1
+            AppPackages/**/Add-AppDevPackage.ps1
+          if-no-files-found: error
