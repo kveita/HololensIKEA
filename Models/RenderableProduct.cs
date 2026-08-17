@@ -10,9 +10,11 @@ namespace HololensIKEA.Models
         /// <summary>URL of the product image (JPEG/PNG). May be null if unavailable.</summary>
         public string ImageUrl    { get; set; }
 
-        /// <summary>True if the product has a 3D model available on 3dfindit.com.</summary>
+        /// <summary>True if the product page exposes an IKEA 3D model.</summary>
         public bool   Has3DModel { get; set; }
-        /// <summary>GTIN (EAN) code used to search for the 3D model on 3dfindit.com.</summary>
+        /// <summary>Original IKEA product page used to resolve the GLB model URL.</summary>
+        public string ModelUrl   { get; set; }
+        /// <summary>Legacy identifier retained for compatibility with shared renderers.</summary>
         public string Gtin       { get; set; }
     }
 }

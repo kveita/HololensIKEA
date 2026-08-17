@@ -12,11 +12,11 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 if (-not $ProjectPath) {
-    $ProjectPath = Join-Path $PSScriptRoot 'HololensSatelliteViewer.csproj'
+    $ProjectPath = Join-Path $PSScriptRoot 'HololensIKEA.csproj'
 }
 
 if (-not $CertificatePath) {
-    $CertificatePath = Join-Path $PSScriptRoot 'HololensSatelliteViewer_TemporaryKey.pfx'
+    $CertificatePath = Join-Path $PSScriptRoot 'HololensIKEA_TemporaryKey.pfx'
 }
 
 function Get-MsBuildPath {
@@ -132,7 +132,7 @@ $dependencies = @(
 Write-Host "Checking for HoloLens at $DeviceIp..."
 & $wadc devices | Out-Host
 
-Uninstall-ExistingPackage -WadcPath $wadc -IpAddress $DeviceIp -PackageNamePrefix 'HololensSatelliteViewer_'
+Uninstall-ExistingPackage -WadcPath $wadc -IpAddress $DeviceIp -PackageNamePrefix 'HololensIKEA_'
 
 Write-Host "Installing $($appx.FullName)..."
 $installArgs = @('install', '-f', $appx.FullName, '-ip', $DeviceIp)

@@ -26,7 +26,7 @@ jobs:
         uses: microsoft/setup-msbuild@v3
 
       - name: NuGet restore
-        run: nuget restore HololensSatelliteViewer.sln
+        run: nuget restore HololensIKEA.sln
 
       - name: Install Windows 10 SDK 19041 and UWP MSBuild tools
         shell: powershell
@@ -43,7 +43,7 @@ jobs:
 
       - name: Build ${{ matrix.configuration }} | x86
         run: >
-          msbuild HololensSatelliteViewer.csproj /m
+          msbuild HololensIKEA.csproj /m
           /p:Configuration=${{ matrix.configuration }}
           /p:Platform=x86
           /p:AppxPackageSigningEnabled=false

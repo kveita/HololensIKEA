@@ -73,7 +73,7 @@ jobs:
         uses: microsoft/setup-msbuild@v3
 
       - name: NuGet restore
-        run: nuget restore HololensSatelliteViewer.sln
+        run: nuget restore HololensIKEA.sln
 
       # ── Install UWP build tools ──────────────────────────────────────
       - name: Install Windows 10 SDK 19041 and UWP MSBuild tools
@@ -99,12 +99,12 @@ jobs:
             -Type Custom `
             -Subject "CN=BB1A7F2A-A87C-44C8-8C14-84C6486E7E75" `
             -KeyUsage DigitalSignature `
-            -FriendlyName "HololensSatelliteViewer" `
+            -FriendlyName "HololensIKEA" `
             -CertStoreLocation "Cert:\CurrentUser\My" `
             -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3","2.5.29.19={text}")
           $pwd = ConvertTo-SecureString -String "ci" -Force -AsPlainText
           Export-PfxCertificate -Cert $cert `
-            -FilePath "${{ github.workspace }}\HololensSatelliteViewer_TemporaryKey.pfx" `
+            -FilePath "${{ github.workspace }}\HololensIKEA_TemporaryKey.pfx" `
             -Password $pwd
 
       # ── Auto-increment package version (submit runs only) ───────────
@@ -141,7 +141,7 @@ jobs:
       # .NET Native packages from GenerateAppxPackageOnBuild.
       - name: Build and package Release x86
         run: >
-          msbuild HololensSatelliteViewer.csproj
+          msbuild HololensIKEA.csproj
           /t:Publish
           /p:Configuration=Release
           /p:Platform=x86
@@ -149,13 +149,13 @@ jobs:
           /p:UapAppxPackageBuildMode=StoreUpload
           /p:AppxPackageDir=AppPackages\
           /p:AppxPackageSigningEnabled=true
-          /p:PackageCertificateKeyFile=${{ github.workspace }}\HololensSatelliteViewer_TemporaryKey.pfx
+          /p:PackageCertificateKeyFile=${{ github.workspace }}\HololensIKEA_TemporaryKey.pfx
           /p:PackageCertificatePassword=ci
           /p:PackageCertificateThumbprint=""
 
       - name: Remove build certificate
         if: always()
-        run: Remove-Item -Path "${{ github.workspace }}\HololensSatelliteViewer_TemporaryKey.pfx" -ErrorAction SilentlyContinue
+        run: Remove-Item -Path "${{ github.workspace }}\HololensIKEA_TemporaryKey.pfx" -ErrorAction SilentlyContinue
 
       # ── Run Windows App Certification Kit ────────────────────────────
       - name: Run Windows App Certification Kit
@@ -196,7 +196,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: HololensSatelliteViewer-${{ github.sha }}-Store-x86
+          name: HololensIKEA-${{ github.sha }}-Store-x86
           path: |
             AppPackages/**/*.appxupload
             AppPackages/**/*.appx
@@ -296,8 +296,8 @@ jobs:
           Write-Host "Creating release $tag with package: $($pkg.Name)"
           $bumpSha = git rev-parse HEAD
           gh release create $tag `
-            --title "HololensSatelliteViewer $tag" `
+            --title "HololensIKEA $tag" `
             --notes $notes `
             --target $bumpSha `
             "$($pkg.FullName)"
-          Write-Host "Release $tag created: https://github.com/turbolego/HololensSatelliteViewer/releases/tag/$tag"
+          Write-Host "Release $tag created: https://github.com/turbolego/HololensIKEA/releases/tag/$tag"

@@ -241,7 +241,7 @@ ClientBin/
 # carries no CA trust, is used only for local sideloading, and is
 # re-creatable from scripts/create_cert.ps1.  Committing it makes the
 # project clone-and-build with zero manual steps.
-!HoloLensHello_TemporaryKey.pfx
+!HololensIKEA_TemporaryKey.pfx
 *.publishsettings
 orleans.codegen.cs
 

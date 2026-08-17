@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Creates (or recreates) the development signing certificate for
-    HololensSatelliteViewer_TemporaryKey.pfx.
+    HololensIKEA_TemporaryKey.pfx.
 
 .DESCRIPTION
     Run this script once from the repo root if the .pfx is missing or expired.
@@ -17,13 +17,13 @@
     Change both here and in the .csproj if you want a different password.
 
 .EXAMPLE
-    # From the repo root (HololensSatelliteViewer\):
+    # From the repo root (HololensIKEA\):
     powershell -ExecutionPolicy Bypass -File scripts\create_cert.ps1
 #>
 
 [CmdletBinding()]
 param(
-    [string]$OutputPath = "HololensSatelliteViewer_TemporaryKey.pfx",
+    [string]$OutputPath = "HololensIKEA_TemporaryKey.pfx",
     [string]$Password   = "temp"
 )
 
@@ -37,9 +37,9 @@ Write-Host "Creating signing certificate..."
 
 $cert = New-SelfSignedCertificate `
     -Type Custom `
-    -Subject "CN=HololensSatelliteViewer" `
+    -Subject "CN=HololensIKEA" `
     -KeyUsage DigitalSignature `
-    -FriendlyName "HololensSatelliteViewer" `
+    -FriendlyName "HololensIKEA" `
     -CertStoreLocation "Cert:\CurrentUser\My" `
     -TextExtension @(
         "2.5.29.37={text}1.3.6.1.5.5.7.3.3",   # Code signing EKU

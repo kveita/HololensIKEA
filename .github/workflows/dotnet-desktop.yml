@@ -23,7 +23,7 @@ jobs:
         uses: microsoft/setup-msbuild@v3
 
       - name: NuGet restore
-        run: nuget restore HololensSatelliteViewer.sln
+        run: nuget restore HololensIKEA.sln
 
       - name: Install Windows 10 SDK 19041 and UWP MSBuild tools
         shell: powershell
@@ -47,17 +47,17 @@ jobs:
             -Type Custom `
             -Subject "CN=BB1A7F2A-A87C-44C8-8C14-84C6486E7E75" `
             -KeyUsage DigitalSignature `
-            -FriendlyName "HololensSatelliteViewer" `
+            -FriendlyName "HololensIKEA" `
             -CertStoreLocation "Cert:\CurrentUser\My" `
             -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3","2.5.29.19={text}")
           $pwd = ConvertTo-SecureString -String "ci" -Force -AsPlainText
           Export-PfxCertificate -Cert $cert `
-            -FilePath "${{ github.workspace }}\HololensSatelliteViewer_TemporaryKey.pfx" `
+            -FilePath "${{ github.workspace }}\HololensIKEA_TemporaryKey.pfx" `
             -Password $pwd
 
       - name: Build and package Release x86
         run: >
-          msbuild HololensSatelliteViewer.csproj
+          msbuild HololensIKEA.csproj
           /t:Publish
           /p:Configuration=Release
           /p:Platform=x86
@@ -65,20 +65,20 @@ jobs:
           /p:UapAppxPackageBuildMode=StoreUpload
           /p:AppxPackageDir=AppPackages\
           /p:AppxPackageSigningEnabled=true
-          /p:PackageCertificateKeyFile=${{ github.workspace }}\HololensSatelliteViewer_TemporaryKey.pfx
+          /p:PackageCertificateKeyFile=${{ github.workspace }}\HololensIKEA_TemporaryKey.pfx
           /p:PackageCertificatePassword=ci
           /p:PackageCertificateThumbprint=""
 
       # Remove the cert from the workspace before the artifact is captured
       - name: Remove signing certificate
         if: always()
-        run: Remove-Item -Path "${{ github.workspace }}\HololensSatelliteViewer_TemporaryKey.pfx" -ErrorAction SilentlyContinue
+        run: Remove-Item -Path "${{ github.workspace }}\HololensIKEA_TemporaryKey.pfx" -ErrorAction SilentlyContinue
 
       - name: Upload appx artifact
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: HololensSatelliteViewer-${{ github.sha }}-Release-x86
+          name: HololensIKEA-${{ github.sha }}-Release-x86
           path: |
             AppPackages/**/*.appxupload
             AppPackages/**/*.appx

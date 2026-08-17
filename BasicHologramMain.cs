@@ -56,7 +56,7 @@ namespace HololensIKEA
         private AppState                    appState = AppState.Idle;
         private string                      inputBuffer = "";
         private Task<RenderableProduct>     pendingProductLoad;
-        private ProductRepository           productRepository;
+        private IkeaProductRepository       productRepository;
         private bool                        keyboardPositioned = false;
         private bool                        airTapInProgress = false;  // Track ongoing air-tap
 
@@ -240,12 +240,8 @@ namespace HololensIKEA
                 }
             };
 
-            // Voice input: product ID recognized (only fires when NOT gazing at keyboard)
-            _speechHandler.OnProductIdRecognized += (elnummer) => {
-                Debug.WriteLine("[Voice] Product ID: " + elnummer);
-                inputBuffer = elnummer.ToString();
-                StartProductLoad();
-            };
+            // URL entry is performed with the holographic keyboard. The legacy
+            // numeric product voice event is intentionally not connected here.
             // Voice input: clear all products
             _speechHandler.OnClearAllProducts += () => {
                 Debug.WriteLine("[Voice] Clear all products");
@@ -282,9 +278,9 @@ namespace HololensIKEA
             };
 
             spatialInputHandler  = new SpatialInputHandler();
-            productRepository    = new ProductRepository();
+            productRepository    = new IkeaProductRepository();
 
-            // Start immediately in input mode so the user can type an elnummer.
+            // Start immediately in input mode so the user can type an IKEA product URL.
             appState = AppState.InputMode;
             keyboardPositioned = false;
             keyboardInputHandler.Show();
@@ -864,13 +860,13 @@ namespace HololensIKEA
                     Debug.WriteLine("Loaded: " + product.ProductName +
                         " W=" + product.WidthMeters + " H=" + product.HeightMeters + " D=" + product.DepthMeters);
 
-                    // Start 3D model fetch if product has a model on 3dfindit.com.
+                    // Start 3D model fetch from the IKEA product page.
                     _activeMeshData = null;
                     _pending3DModelLoad = null;
-                    if (product.Has3DModel && !string.IsNullOrEmpty(product.Gtin))
+                    if (product.Has3DModel && !string.IsNullOrEmpty(product.ModelUrl))
                     {
-                        Debug.WriteLine("[3DFindit] Fetching 3D model for GTIN " + product.Gtin);
-                        _pending3DModelLoad = _modelService3D.FetchModelAsync(product.Gtin, CancellationToken.None);
+                        Debug.WriteLine("[IKEA] Fetching 3D model from product page " + product.ModelUrl);
+                        _pending3DModelLoad = _modelService3D.FetchModelAsync(product.ModelUrl, CancellationToken.None);
                     }
 
                     // Start background image download + depth analysis.
@@ -895,13 +891,13 @@ namespace HololensIKEA
                         _productRotation);
                     _meshRotation = _productRotation;
 
-                    Debug.WriteLine("[3DFindit] 3D model loaded: " + _activeMeshData.Positions.Length + " verts, " + (_activeMeshData.Indices.Length / 3) + " tris");
-                    Debug.WriteLine("[3DFindit] Mesh bounds (m): " + _meshDims.X.ToString("F3") + " x " + _meshDims.Y.ToString("F3") + " x " + _meshDims.Z.ToString("F3"));
-                    Debug.WriteLine("[3DFindit] Product dims (m): " + _productDims.X.ToString("F3") + " x " + _productDims.Y.ToString("F3") + " x " + _productDims.Z.ToString("F3"));
+                    Debug.WriteLine("[IKEA] 3D model loaded: " + _activeMeshData.Positions.Length + " verts, " + (_activeMeshData.Indices.Length / 3) + " tris");
+                    Debug.WriteLine("[IKEA] Mesh bounds (m): " + _meshDims.X.ToString("F3") + " x " + _meshDims.Y.ToString("F3") + " x " + _meshDims.Z.ToString("F3"));
+                    Debug.WriteLine("[IKEA] Product dims (m): " + _productDims.X.ToString("F3") + " x " + _productDims.Y.ToString("F3") + " x " + _productDims.Z.ToString("F3"));
                 }
                 else if (_pending3DModelLoad.IsFaulted)
                 {
-                    Debug.WriteLine("[3DFindit] 3D model load failed: " + _pending3DModelLoad.Exception?.GetBaseException()?.Message);
+                    Debug.WriteLine("[IKEA] 3D model load failed: " + _pending3DModelLoad.Exception?.GetBaseException()?.Message);
                 }
                 _pending3DModelLoad = null;
             }
@@ -1367,16 +1363,18 @@ namespace HololensIKEA
 
         private void StartProductLoad()
         {
-            if (!int.TryParse(inputBuffer, out int elnummer) || elnummer <= 0)
+            var productUrl = inputBuffer == null ? "" : inputBuffer.Trim();
+            if (!productUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                !productUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             {
-                Debug.WriteLine("Invalid elnummer: '" + inputBuffer + "'");
+                Debug.WriteLine("Invalid IKEA product URL: '" + productUrl + "'");
                 return;
             }
-            Debug.WriteLine("Loading product elnummer: " + elnummer);
+            Debug.WriteLine("Loading IKEA product page: " + productUrl);
             appState           = AppState.Loading;
             inputBuffer        = "";
-            var cts            = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            pendingProductLoad = productRepository.GetProductAsync(elnummer, cts.Token);
+            var cts            = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            pendingProductLoad = productRepository.GetProductAsync(productUrl, cts.Token);
         }
 
         /// <summary>
@@ -1658,7 +1656,7 @@ namespace HololensIKEA
             {
                 await _speechHandler.InitializeAsync();
                 await _speechHandler.StartListeningAsync();
-                Debug.WriteLine("[Speech] Voice input ready - say a product number or 'add [number]'");
+                Debug.WriteLine("[Speech] Voice input ready - type or dictate an IKEA product URL");
             }
             catch (Exception ex)
             {
