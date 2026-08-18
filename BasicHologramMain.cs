@@ -1,0 +1,1733 @@
+//
+// Comment out this preprocessor definition to disable all of the
+// sample content.
+//
+// To remove the content after disabling it:
+//     * Remove the unused code from this file.
+//     * Delete the Content folder provided with this template.
+//
+#define DRAW_SAMPLE_CONTENT
+
+using System;
+using System.Diagnostics;
+using System.Numerics;
+using Windows.Gaming.Input;
+using Windows.Graphics.DirectX.Direct3D11;
+using Windows.Graphics.Holographic;
+using Windows.Perception.Spatial;
+using Windows.UI.Input.Spatial;
+
+using HololensIKEA.Common;
+using HololensIKEA.Content;
+using HololensIKEA.Models;
+using HololensIKEA.Services;
+using System.Threading;
+using System.Threading.Tasks;
+using Windows.Foundation;
+using System.Collections.Generic;
+
+#if DRAW_SAMPLE_CONTENT
+// HololensIKEA.Content already imported above
+#endif
+
+namespace HololensIKEA
+{
+    /// <summary>
+    /// Updates, renders, and presents holographic content using Direct3D.
+    /// </summary>
+    internal class HolographicTemplateAppMain : IDisposable
+    {
+
+#if DRAW_SAMPLE_CONTENT
+        // Spinning cube: loading indicator.
+        private SpinningCubeRenderer        spinningCubeRenderer;
+        // Product box: shown after a product is loaded.
+        private ProductBoxRenderer          productBoxRenderer;
+        // Product sprite: image overlay on box front face.
+        private ProductSpriteRenderer       productSpriteRenderer;
+        // Holographic keyboard: gaze + air-tap text input.
+        private KeyboardInputHandler        keyboardInputHandler;
+
+        private SpatialInputHandler         spatialInputHandler;
+#endif
+
+        // --- Product loading state machine ---
+        private enum AppState { Idle, InputMode, Loading, ShowingProduct }
+        private AppState                    appState = AppState.Idle;
+        private string                      inputBuffer = "";
+        private Task<RenderableProduct>     pendingProductLoad;
+        private IkeaProductRepository       productRepository;
+        private bool                        keyboardPositioned = false;
+        private bool                        airTapInProgress = false;  // Track ongoing air-tap
+
+        // --- Image / sprite loading ---
+        private ProductImageLoader          imageLoader;
+        private readonly object             _pendingImageLock = new object();
+        private SharpDX.Direct3D11.ShaderResourceView _pendingImageSRV;
+        private SharpDX.Direct3D11.ShaderResourceView _pendingDispSRV;
+        private SharpDX.Direct3D11.ShaderResourceView _pendingSideSRV;
+        private ContentBounds _pendingBounds;
+        private ViewType      _pendingViewType = ViewType.FrontOnly;
+
+        // --- Active product sprite state (needed to restore after rendering saved instances) ---
+        private SharpDX.Direct3D11.ShaderResourceView _activeTextureSRV;
+        private SharpDX.Direct3D11.ShaderResourceView _activeDispSRV;
+        private SharpDX.Direct3D11.ShaderResourceView _activeSideSRV;
+        private System.Numerics.Vector4               _activeContentBounds = new System.Numerics.Vector4(0f, 0f, 1f, 1f);
+        private ViewType                              _activeViewType = ViewType.FrontOnly;
+
+        // Last known head position/forward — used to position the box when a product finishes loading.
+        private Vector3                     _lastHeadPosition = new Vector3(0f, 0f, 0f);
+        private Vector3                     _lastHeadForward  = new Vector3(0f, 0f, -1f);
+
+        // --- Pinch-drag state ---
+        private bool    _isDraggingProduct = false;
+        private Vector3 _dragHandOffset    = Vector3.Zero;  // handPos - boxCenter at drag start
+        private float   _dragGazeDistance  = 2f;            // fallback depth when hand pos unavailable
+        private Vector3 _productPosition   = new Vector3(0f, 0f, -2f);  // cached for hit-test
+        private Vector3 _productDims       = Vector3.Zero;  // zero until first product loads
+
+        // --- Rotation state ---
+        private Quaternion _productRotation      = Quaternion.Identity;
+        private bool       _isRotating           = false;
+        private Vector3    _rotationAxis         = Vector3.UnitY;
+        private Vector3    _rotationStartGazeDir = Vector3.Zero;
+        private Quaternion _rotationStartQuat    = Quaternion.Identity;
+
+        // --- Manipulation handles (edge visual indicators) ---
+        private ProductManipulationHandles _manipulationHandles;
+
+        // --- Dimension labels (show sizes in mm) ---
+        private ProductDimensionLabels     _dimensionLabels;
+
+        // --- Voice input for product IDs ---
+        private SpeechCommandHandler       _speechHandler;
+
+        // --- Multi-product support ---
+        private List<ProductInstance>      _productInstances = new List<ProductInstance>();
+        private ProductInstance            _selectedProduct = null;
+        private int                        _pendingProductElnummer = 0;  // elnummer being loaded
+
+        // --- Gaze state for handle visibility ---
+        private bool                       _gazeOnProduct = false;
+
+        // --- Search support ---
+        private ProductSearchService           _productSearchService;
+        private SearchResultsDialog            _searchResultsDialog;
+
+        // --- IKEA GLB model support ---
+        private ModelService3D                  _modelService3D = new ModelService3D();
+        private GltfMeshRenderer               _gltfMeshRenderer;
+        private GltfMeshData                   _activeMeshData;
+        private Task<GltfMeshData>             _pending3DModelLoad;
+
+        // --- 3D mesh independent transform ---
+        private Vector3    _meshPosition = new Vector3(0f, 0f, -2f);
+        private Quaternion _meshRotation = Quaternion.Identity;
+        private Vector3    _meshDims     = Vector3.Zero;  // bounding box in meters for hit-test
+        private bool       _isDraggingMesh = false;
+        private Vector3    _meshDragHandOffset = Vector3.Zero;
+        private float      _meshDragGazeDistance = 2f;
+        private bool       _isRotatingMesh = false;
+        private Vector3    _meshRotationAxis = Vector3.UnitY;
+        private Vector3    _meshRotStartGazeDir = Vector3.Zero;
+        private Quaternion _meshRotStartQuat = Quaternion.Identity;
+        private bool       _gazeOnMesh = false;
+
+        // Cached reference to device resources.
+        private DeviceResources             deviceResources;
+
+        // Render loop timer.
+        private StepTimer                   timer = new StepTimer();
+
+        // Represents the holographic space around the user.
+        HolographicSpace                    holographicSpace;
+
+        // SpatialLocator that is attached to the default HolographicDisplay.
+        SpatialLocator                      spatialLocator;
+
+        // A stationary reference frame based on spatialLocator.
+        SpatialStationaryFrameOfReference   stationaryReferenceFrame;
+
+        // Keep track of gamepads.
+        private class GamepadWithButtonState
+        {
+            public Windows.Gaming.Input.Gamepad gamepad;
+            public bool buttonAWasPressedLastFrame;
+            public GamepadWithButtonState(
+                Windows.Gaming.Input.Gamepad gamepad,
+                bool buttonAWasPressedLastFrame)
+            {
+                this.gamepad = gamepad;
+                this.buttonAWasPressedLastFrame = buttonAWasPressedLastFrame;
+            }
+        };
+        List<GamepadWithButtonState>        gamepads = new List<GamepadWithButtonState>();
+
+        // Keep track of mouse input.
+        bool                                pointerPressed = false;
+
+        // Cache whether or not the HolographicCamera.Display property can be accessed.
+        bool                                canGetHolographicDisplayForCamera = false;
+
+        // Cache whether or not the HolographicDisplay.GetDefault() method can be called.
+        bool                                canGetDefaultHolographicDisplay = false;
+
+        // Cache whether or not the HolographicCameraRenderingParameters.CommitDirect3D11DepthBuffer() method can be called.
+        bool                                canCommitDirect3D11DepthBuffer = false;
+
+        /// <summary>
+        /// Loads and initializes application assets when the application is loaded.
+        /// </summary>
+        /// <param name="deviceResources"></param>
+        public HolographicTemplateAppMain(DeviceResources deviceResources)
+        {
+            this.deviceResources = deviceResources;
+
+            // Register to be notified if the Direct3D device is lost.
+            this.deviceResources.DeviceLost     += this.OnDeviceLost;
+            this.deviceResources.DeviceRestored += this.OnDeviceRestored;
+
+            // If connected, a game controller can also be used for input.
+            Gamepad.GamepadAdded += this.OnGamepadAdded;
+            Gamepad.GamepadRemoved += this.OnGamepadRemoved;
+
+            foreach (var gamepad in Gamepad.Gamepads)
+            {
+                OnGamepadAdded(null, gamepad);
+            }
+            
+            canGetHolographicDisplayForCamera = Windows.Foundation.Metadata.ApiInformation.IsPropertyPresent("Windows.Graphics.Holographic.HolographicCamera", "Display");
+            canGetDefaultHolographicDisplay = Windows.Foundation.Metadata.ApiInformation.IsMethodPresent("Windows.Graphics.Holographic.HolographicDisplay", "GetDefault");
+            canCommitDirect3D11DepthBuffer = Windows.Foundation.Metadata.ApiInformation.IsMethodPresent("Windows.Graphics.Holographic.HolographicCameraRenderingParameters", "CommitDirect3D11DepthBuffer");
+        }
+
+        public void SetHolographicSpace(HolographicSpace holographicSpace)
+        {
+            this.holographicSpace = holographicSpace;
+
+            // 
+            // TODO: Add code here to initialize your content.
+            // 
+
+#if DRAW_SAMPLE_CONTENT
+            // Initialize renderers.
+            spinningCubeRenderer  = new SpinningCubeRenderer(deviceResources);
+            productBoxRenderer    = new ProductBoxRenderer(deviceResources);
+            productSpriteRenderer = new ProductSpriteRenderer(deviceResources);
+            _gltfMeshRenderer     = new GltfMeshRenderer(deviceResources);
+            _gltfMeshRenderer.CreateDeviceDependentResourcesAsync();
+            keyboardInputHandler  = new KeyboardInputHandler(deviceResources);
+            imageLoader           = new ProductImageLoader(deviceResources.D3DDevice);
+            _manipulationHandles  = new ProductManipulationHandles(deviceResources);
+            _dimensionLabels      = new ProductDimensionLabels(deviceResources);
+            _speechHandler        = new SpeechCommandHandler();
+
+            // Initialize speech recognition
+            InitializeSpeechAsync();
+
+            // 3D keyboard: text changes update the buffer
+            keyboardInputHandler.OnTextChanged += (text) => {
+                inputBuffer = text;
+                Debug.WriteLine("[Input] Text: " + text);
+            };
+            // 3D keyboard: Enter key (\u21b5) fires submit
+            keyboardInputHandler.OnSubmit += (text) => {
+                if (appState == AppState.InputMode || appState == AppState.ShowingProduct)
+                {
+                    inputBuffer = text;
+                    StartProductLoad();
+                }
+            };
+
+            // URL entry is performed with the holographic keyboard. The legacy
+            // numeric product voice event is intentionally not connected here.
+            // Voice input: clear all products
+            _speechHandler.OnClearAllProducts += () => {
+                Debug.WriteLine("[Voice] Clear all products");
+                ClearAllProducts();
+            };
+            // Voice input: dismiss dialog
+            _speechHandler.OnDismissDialog += () => {
+                Debug.WriteLine("[Voice] Dismiss dialog");
+                if (_searchResultsDialog != null) _searchResultsDialog.Hide();
+            };
+            // Voice input: digits spoken while gazing at keyboard → type them
+            _speechHandler.OnTextForKeyboard += (text) => {
+                Debug.WriteLine("[Voice→Keyboard] " + text);
+                keyboardInputHandler.InsertText(text);
+            };
+            // Voice input: non-numeric text while gazing at keyboard → search
+            _speechHandler.OnSearchQuery += (query) => {
+                Debug.WriteLine("[Voice→Search] " + query);
+                StartProductSearch(query);
+            };
+            // Voice input: status changed
+            _speechHandler.OnStatusChanged += (status) => {
+                Debug.WriteLine("[Voice] Status: " + status);
+            };
+
+            // Search service and results dialog
+            _productSearchService = new ProductSearchService();
+            _searchResultsDialog  = new SearchResultsDialog(deviceResources);
+            _searchResultsDialog.OnProductSelected += (produktnr) => {
+                Debug.WriteLine("[Search] Selected product: " + produktnr);
+                _searchResultsDialog.Hide();
+                inputBuffer = produktnr;
+                StartProductLoad();
+            };
+
+            spatialInputHandler  = new SpatialInputHandler();
+            productRepository    = new IkeaProductRepository();
+
+            // Start immediately in input mode so the user can type an IKEA product URL.
+            appState = AppState.InputMode;
+            keyboardPositioned = false;
+            keyboardInputHandler.Show();
+#endif
+
+            if (canGetDefaultHolographicDisplay)
+            {
+                // Subscribe for notifications about changes to the state of the default HolographicDisplay 
+                // and its SpatialLocator.
+                HolographicSpace.IsAvailableChanged += this.OnHolographicDisplayIsAvailableChanged;
+            }
+
+            // Acquire the current state of the default HolographicDisplay and its SpatialLocator.
+            OnHolographicDisplayIsAvailableChanged(null, null);
+
+            // Respond to camera added events by creating any resources that are specific
+            // to that camera, such as the back buffer render target view.
+            // When we add an event handler for CameraAdded, the API layer will avoid putting
+            // the new camera in new HolographicFrames until we complete the deferral we created
+            // for that handler, or return from the handler without creating a deferral. This
+            // allows the app to take more than one frame to finish creating resources and
+            // loading assets for the new holographic camera.
+            // This function should be registered before the app creates any HolographicFrames.
+            holographicSpace.CameraAdded += this.OnCameraAdded;
+
+            // Respond to camera removed events by releasing resources that were created for that
+            // camera.
+            // When the app receives a CameraRemoved event, it releases all references to the back
+            // buffer right away. This includes render target views, Direct2D target bitmaps, and so on.
+            // The app must also ensure that the back buffer is not attached as a render target, as
+            // shown in DeviceResources.ReleaseResourcesForBackBuffer.
+            holographicSpace.CameraRemoved += this.OnCameraRemoved;
+
+            // Notes on spatial tracking APIs:
+            // * Stationary reference frames are designed to provide a best-fit position relative to the
+            //   overall space. Individual positions within that reference frame are allowed to drift slightly
+            //   as the device learns more about the environment.
+            // * When precise placement of individual holograms is required, a SpatialAnchor should be used to
+            //   anchor the individual hologram to a position in the real world - for example, a point the user
+            //   indicates to be of special interest. Anchor positions do not drift, but can be corrected; the
+            //   anchor will use the corrected position starting in the next frame after the correction has
+            //   occurred.
+        }
+
+        public void Dispose()
+        {
+#if DRAW_SAMPLE_CONTENT
+            if (spinningCubeRenderer != null)
+            {
+                spinningCubeRenderer.Dispose();
+                spinningCubeRenderer = null;
+            }
+            if (productBoxRenderer != null)
+            {
+                productBoxRenderer.Dispose();
+                productBoxRenderer = null;
+            }
+            if (productSpriteRenderer != null)
+            {
+                productSpriteRenderer.Dispose();
+                productSpriteRenderer = null;
+            }
+            if (keyboardInputHandler != null)
+            {
+                keyboardInputHandler.Dispose();
+                keyboardInputHandler = null;
+            }
+            if (_manipulationHandles != null)
+            {
+                _manipulationHandles.Dispose();
+                _manipulationHandles = null;
+            }
+            if (_dimensionLabels != null)
+            {
+                _dimensionLabels.Dispose();
+                _dimensionLabels = null;
+            }
+            if (_speechHandler != null)
+            {
+                _speechHandler.Dispose();
+                _speechHandler = null;
+            }
+            if (_searchResultsDialog != null)
+            {
+                _searchResultsDialog.Dispose();
+                _searchResultsDialog = null;
+            }
+            _productSearchService = null;
+            // Dispose all product instances
+            foreach (var inst in _productInstances)
+            {
+                inst.DisposeTextures();
+            }
+            _productInstances.Clear();
+#endif
+        }
+
+        /// <summary>
+        /// Updates the application state once per frame.
+        /// </summary>
+        public HolographicFrame Update()
+        {
+            // Before doing the timer update, there is some work to do per-frame
+            // to maintain holographic rendering. First, we will get information
+            // about the current frame.
+
+            // The HolographicFrame has information that the app needs in order
+            // to update and render the current frame. The app begins each new
+            // frame by calling CreateNextFrame.
+            HolographicFrame holographicFrame = holographicSpace.CreateNextFrame();
+
+            // Get a prediction of where holographic cameras will be when this frame
+            // is presented.
+            HolographicFramePrediction prediction = holographicFrame.CurrentPrediction;
+
+            // Back buffers can change from frame to frame. Validate each buffer, and recreate
+            // resource views and depth buffers as needed.
+            deviceResources.EnsureCameraResources(holographicFrame, prediction);
+
+#if DRAW_SAMPLE_CONTENT
+            if (stationaryReferenceFrame != null)
+            {
+                // Check for new input state since the last frame.
+                for (int i = 0; i < gamepads.Count; ++i)
+                {
+                    bool buttonDownThisUpdate = (gamepads[i].gamepad.GetCurrentReading().Buttons & GamepadButtons.A) == GamepadButtons.A;
+                    if (buttonDownThisUpdate && !gamepads[i].buttonAWasPressedLastFrame)
+                    {
+                        pointerPressed = true;
+                    }
+                    gamepads[i].buttonAWasPressedLastFrame = buttonDownThisUpdate;
+                }
+
+                SpatialInteractionSourceState pointerState = spatialInputHandler.CheckForInput();
+                SpatialPointerPose pose = null;
+                if (null != pointerState)
+                {
+                    pose = pointerState.TryGetPointerPose(stationaryReferenceFrame.CoordinateSystem);
+                }
+                else if (pointerPressed)
+                {
+                    pose = SpatialPointerPose.TryGetAtTimestamp(stationaryReferenceFrame.CoordinateSystem, prediction.Timestamp);
+                }
+                pointerPressed = false;
+
+                // Get head pose every frame (independent of hand/controller input) for keyboard placement.
+                SpatialPointerPose headPose = SpatialPointerPose.TryGetAtTimestamp(stationaryReferenceFrame.CoordinateSystem, prediction.Timestamp);
+
+                // Keep a running copy of the head transform so we can position new holograms
+                // even when no air-tap is in progress (e.g. when a product finishes loading).
+                if (headPose != null)
+                {
+                    var hp = headPose.Head.Position;
+                    var hd = headPose.Head.ForwardDirection;
+                    _lastHeadPosition = new Vector3(hp.X, hp.Y, hp.Z);
+                    _lastHeadForward  = new Vector3(hd.X, hd.Y, hd.Z);
+                }
+
+                // Update keyboard handler gaze hit-testing
+                if (keyboardInputHandler.IsVisible && headPose != null)
+                {
+                    var headPos = headPose.Head.Position;
+                    var headDir = headPose.Head.ForwardDirection;
+                    
+                    // Position keyboard in front of user on first visibility
+                    if (!keyboardPositioned)
+                    {
+                        keyboardInputHandler.PlaceInFrontOfUser(
+                            new Vector3(headPos.X, headPos.Y, headPos.Z),
+                            new Vector3(headDir.X, headDir.Y, headDir.Z));
+                        keyboardPositioned = true;
+                        Debug.WriteLine("[Input] Keyboard positioned in front of user");
+                    }
+                    
+                    keyboardInputHandler.Update(
+                        new Vector3(headPos.X, headPos.Y, headPos.Z),
+                        new Vector3(headDir.X, headDir.Y, headDir.Z));
+
+                    // Tell speech handler whether user is gazing at keyboard
+                    if (_speechHandler != null)
+                        _speechHandler.IsGazingAtKeyboard = keyboardInputHandler.IsGazeOnPanel;
+                }
+
+                // Update search results dialog gaze hit-testing
+                if (_searchResultsDialog != null && _searchResultsDialog.IsVisible && headPose != null)
+                {
+                    var headPos2 = headPose.Head.Position;
+                    var headDir2 = headPose.Head.ForwardDirection;
+                    _searchResultsDialog.UpdateGaze(
+                        new Vector3(headPos2.X, headPos2.Y, headPos2.Z),
+                        new Vector3(headDir2.X, headDir2.Y, headDir2.Z));
+                }
+
+                // Update manipulation handle highlights based on current gaze (runs every frame).
+                // Handles are only visible when gazing at the product.
+                if (appState == AppState.ShowingProduct && headPose != null
+                    && !_isDraggingProduct && !_isRotating)
+                {
+                    var gO = new Vector3(headPose.Head.Position.X,
+                                         headPose.Head.Position.Y,
+                                         headPose.Head.Position.Z);
+                    var gD = new Vector3(headPose.Head.ForwardDirection.X,
+                                         headPose.Head.ForwardDirection.Y,
+                                         headPose.Head.ForwardDirection.Z);
+                    float hd;
+                    var hz = ManipulationZone.None;
+                    _gazeOnProduct = GazeHitsBox(gO, gD, _productPosition, _productDims * 0.5f, 10f, out hd);
+                    _manipulationHandles.IsVisible = _gazeOnProduct;
+                    if (_gazeOnProduct)
+                    {
+                        var localOff = Vector3.Transform(
+                            gO + gD * hd - _productPosition,
+                            Quaternion.Inverse(_productRotation));
+                        float nx = localOff.X / (_productDims.X * 0.5f);
+                        float ny = localOff.Y / (_productDims.Y * 0.5f);
+                        const float edge = 0.62f;
+                        if      (nx < -edge) hz = ManipulationZone.RotateLeft;
+                        else if (nx >  edge) hz = ManipulationZone.RotateRight;
+                        else if (ny >  edge) hz = ManipulationZone.RotateTop;
+                        else if (ny < -edge) hz = ManipulationZone.RotateBottom;
+                        else                 hz = ManipulationZone.MoveCenter;
+                    }
+                    _manipulationHandles.SetHighlight(hz);
+                }
+
+                // Air-tap / pinch-drag dispatch.
+                //
+                // Priority:
+                //   1. ShowingProduct + gaze hits product edge zone  → start rotation
+                //   2. ShowingProduct + gaze hits product center zone → start drag
+                //   3. ShowingProduct + gaze hits 3D mesh → start mesh drag/rotate
+                //   4. Keyboard visible → route tap to keyboard
+                //   5. Otherwise → position spinning cube
+                if (pointerState != null && appState == AppState.ShowingProduct
+                    && !_isDraggingProduct && !_isRotating && !_isDraggingMesh && !_isRotatingMesh)
+                {
+                    if (pose != null)
+                    {
+                        var rayOrigin = new Vector3(pose.Head.Position.X,
+                                                    pose.Head.Position.Y,
+                                                    pose.Head.Position.Z);
+                        var rayDir    = new Vector3(pose.Head.ForwardDirection.X,
+                                                    pose.Head.ForwardDirection.Y,
+                                                    pose.Head.ForwardDirection.Z);
+                        float hitDist;
+                        float meshHitDist = 0f;
+                        bool hitProduct = GazeHitsBox(rayOrigin, rayDir, _productPosition,
+                                        _productDims * 0.5f, 10f, out hitDist);
+                        bool hitMesh = _activeMeshData != null &&
+                                       GazeHitsBox(rayOrigin, rayDir, _meshPosition,
+                                       _meshDims * 0.5f, 10f, out meshHitDist);
+
+                        if (hitProduct && (!hitMesh || hitDist <= meshHitDist))
+                        {
+                            // Determine zone: outer 38% of each axis = rotation handle.
+                            var localOff = Vector3.Transform(
+                                rayOrigin + rayDir * hitDist - _productPosition,
+                                Quaternion.Inverse(_productRotation));
+                            float nx = localOff.X / (_productDims.X * 0.5f);
+                            float ny = localOff.Y / (_productDims.Y * 0.5f);
+                            const float edge   = 0.62f;
+                            bool  inEdge = Math.Abs(nx) > edge || Math.Abs(ny) > edge;
+
+                            if (inEdge)
+                            {
+                                // Start rotation — Y-axis for horizontal edges, X-axis for vertical.
+                                _rotationAxis         = Math.Abs(nx) > Math.Abs(ny)
+                                    ? Vector3.UnitY : Vector3.UnitX;
+                                _rotationStartGazeDir = rayDir;
+                                _rotationStartQuat    = _productRotation;
+                                _isRotating           = true;
+                                var rotZone = nx < -edge ? ManipulationZone.RotateLeft  :
+                                              nx >  edge ? ManipulationZone.RotateRight :
+                                              ny >  edge ? ManipulationZone.RotateTop   :
+                                                           ManipulationZone.RotateBottom;
+                                _manipulationHandles.SetHighlight(rotZone);
+                                Debug.WriteLine("[Rotate] Started axis=" +
+                                    (_rotationAxis == Vector3.UnitY ? "Y" : "X"));
+                            }
+                            else
+                            {
+                                // Start drag (move).
+                                var loc = pointerState.Properties.TryGetLocation(
+                                              stationaryReferenceFrame.CoordinateSystem);
+                                if (loc?.Position != null)
+                                {
+                                    var hp = loc.Position.Value;
+                                    _dragHandOffset = new Vector3(hp.X, hp.Y, hp.Z) - _productPosition;
+                                }
+                                else
+                                {
+                                    _dragHandOffset = Vector3.Zero;
+                                }
+                                _dragGazeDistance  = hitDist;
+                                _isDraggingProduct = true;
+                                _manipulationHandles.SetHighlight(ManipulationZone.MoveCenter);
+                                Debug.WriteLine("[Drag] Started at dist=" + hitDist.ToString("F2"));
+                            }
+                        }
+                        else if (hitMesh)
+                        {
+                            // Hit the 3D mesh model — start mesh drag or rotation
+                            meshHitDist = 0f;
+                            GazeHitsBox(rayOrigin, rayDir, _meshPosition, _meshDims * 0.5f, 10f, out meshHitDist);
+                            var localOff = Vector3.Transform(
+                                rayOrigin + rayDir * meshHitDist - _meshPosition,
+                                Quaternion.Inverse(_meshRotation));
+                            float nx = _meshDims.X > 0 ? localOff.X / (_meshDims.X * 0.5f) : 0;
+                            float ny = _meshDims.Y > 0 ? localOff.Y / (_meshDims.Y * 0.5f) : 0;
+                            const float edge = 0.62f;
+                            bool inEdge = Math.Abs(nx) > edge || Math.Abs(ny) > edge;
+
+                            if (inEdge)
+                            {
+                                // Start mesh rotation
+                                _meshRotationAxis    = Math.Abs(nx) > Math.Abs(ny) ? Vector3.UnitY : Vector3.UnitX;
+                                _meshRotStartGazeDir = rayDir;
+                                _meshRotStartQuat    = _meshRotation;
+                                _isRotatingMesh      = true;
+                                Debug.WriteLine("[MeshRotate] Started axis=" +
+                                    (_meshRotationAxis == Vector3.UnitY ? "Y" : "X"));
+                            }
+                            else
+                            {
+                                // Start mesh drag
+                                var loc = pointerState.Properties.TryGetLocation(
+                                              stationaryReferenceFrame.CoordinateSystem);
+                                if (loc?.Position != null)
+                                {
+                                    var hp = loc.Position.Value;
+                                    _meshDragHandOffset = new Vector3(hp.X, hp.Y, hp.Z) - _meshPosition;
+                                }
+                                else
+                                {
+                                    _meshDragHandOffset = Vector3.Zero;
+                                }
+                                _meshDragGazeDistance = meshHitDist;
+                                _isDraggingMesh = true;
+                                Debug.WriteLine("[MeshDrag] Started at dist=" + meshHitDist.ToString("F2"));
+                            }
+                        }
+                        else if (_searchResultsDialog != null && _searchResultsDialog.IsVisible)
+                        {
+                            // Tap missed the product box — check search results dialog
+                            Debug.WriteLine("[Input] Air-tap on search dialog");
+                            _searchResultsDialog.HandleAirTap();
+                        }
+                        else if (keyboardInputHandler.IsVisible)
+                        {
+                            // Tap missed the product box — route to keyboard.
+                            Debug.WriteLine("[Input] Air-tap on keyboard (missed product)");
+                            keyboardInputHandler.HandleAirTap();
+                        }
+                    }
+                }
+                else if (pose != null && !_isDraggingProduct && !_isRotating && !_isDraggingMesh && !_isRotatingMesh)
+                {
+                    if (_searchResultsDialog != null && _searchResultsDialog.IsVisible)
+                    {
+                        Debug.WriteLine("[Input] Air-tap on search dialog");
+                        _searchResultsDialog.HandleAirTap();
+                    }
+                    else if (keyboardInputHandler.IsVisible && pointerState != null)
+                    {
+                        Debug.WriteLine("[Input] Air-tap on keyboard");
+                        keyboardInputHandler.HandleAirTap();
+                    }
+                    else if (appState != AppState.ShowingProduct)
+                    {
+                        spinningCubeRenderer.PositionHologram(pose);
+                    }
+                }
+
+                // Drag update: follow hand (or gaze at fixed depth as fallback).
+                var updatedState = spatialInputHandler.CheckForUpdate();
+                if (_isDraggingProduct && updatedState != null)
+                {
+                    var loc = updatedState.Properties.TryGetLocation(
+                                  stationaryReferenceFrame.CoordinateSystem);
+                    if (loc?.Position != null)
+                    {
+                        var hp     = loc.Position.Value;
+                        var newPos = new Vector3(hp.X, hp.Y, hp.Z) - _dragHandOffset;
+                        _productPosition = newPos;
+                        productBoxRenderer.SetPosition(newPos);
+                        productSpriteRenderer.SetPosition(newPos);
+                    }
+                    else if (headPose != null)
+                    {
+                        // Fallback: maintain fixed depth along the current gaze ray.
+                        var gO     = new Vector3(headPose.Head.Position.X,
+                                                 headPose.Head.Position.Y,
+                                                 headPose.Head.Position.Z);
+                        var gD     = new Vector3(headPose.Head.ForwardDirection.X,
+                                                 headPose.Head.ForwardDirection.Y,
+                                                 headPose.Head.ForwardDirection.Z);
+                        var newPos = gO + gD * _dragGazeDistance;
+                        _productPosition = newPos;
+                        productBoxRenderer.SetPosition(newPos);
+                        productSpriteRenderer.SetPosition(newPos);
+                    }
+                }
+
+                // Rotation update: map gaze azimuth/elevation delta to product rotation.
+                if (_isRotating && headPose != null)
+                {
+                    var curDir = new Vector3(headPose.Head.ForwardDirection.X,
+                                             headPose.Head.ForwardDirection.Y,
+                                             headPose.Head.ForwardDirection.Z);
+                    float delta;
+                    if (_rotationAxis == Vector3.UnitY)
+                    {
+                        // Horizontal gaze movement → Y-axis spin.
+                        float az0 = (float)Math.Atan2(_rotationStartGazeDir.X, -_rotationStartGazeDir.Z);
+                        float az1 = (float)Math.Atan2(curDir.X, -curDir.Z);
+                        delta = (az1 - az0) * 2.5f;
+                    }
+                    else
+                    {
+                        // Vertical gaze movement → X-axis tilt.
+                        float el0 = (float)Math.Asin(Math.Max(-1f, Math.Min(1f, _rotationStartGazeDir.Y)));
+                        float el1 = (float)Math.Asin(Math.Max(-1f, Math.Min(1f, curDir.Y)));
+                        delta = (el1 - el0) * 2.5f;
+                    }
+                    _productRotation = Quaternion.Normalize(
+                        _rotationStartQuat * Quaternion.CreateFromAxisAngle(_rotationAxis, delta));
+                    productBoxRenderer.SetRotation(_productRotation);
+                    productSpriteRenderer.SetRotation(_productRotation);
+                }
+
+                // Mesh drag update: follow hand or gaze at fixed depth.
+                if (_isDraggingMesh && updatedState != null)
+                {
+                    var loc = updatedState.Properties.TryGetLocation(
+                                  stationaryReferenceFrame.CoordinateSystem);
+                    if (loc?.Position != null)
+                    {
+                        var hp = loc.Position.Value;
+                        _meshPosition = new Vector3(hp.X, hp.Y, hp.Z) - _meshDragHandOffset;
+                    }
+                    else if (headPose != null)
+                    {
+                        var gO = new Vector3(headPose.Head.Position.X,
+                                             headPose.Head.Position.Y,
+                                             headPose.Head.Position.Z);
+                        var gD = new Vector3(headPose.Head.ForwardDirection.X,
+                                             headPose.Head.ForwardDirection.Y,
+                                             headPose.Head.ForwardDirection.Z);
+                        _meshPosition = gO + gD * _meshDragGazeDistance;
+                    }
+                }
+
+                // Mesh rotation update: same gaze-based logic as product rotation.
+                if (_isRotatingMesh && headPose != null)
+                {
+                    var curDir = new Vector3(headPose.Head.ForwardDirection.X,
+                                             headPose.Head.ForwardDirection.Y,
+                                             headPose.Head.ForwardDirection.Z);
+                    float delta;
+                    if (_meshRotationAxis == Vector3.UnitY)
+                    {
+                        float az0 = (float)Math.Atan2(_meshRotStartGazeDir.X, -_meshRotStartGazeDir.Z);
+                        float az1 = (float)Math.Atan2(curDir.X, -curDir.Z);
+                        delta = (az1 - az0) * 2.5f;
+                    }
+                    else
+                    {
+                        float el0 = (float)Math.Asin(Math.Max(-1f, Math.Min(1f, _meshRotStartGazeDir.Y)));
+                        float el1 = (float)Math.Asin(Math.Max(-1f, Math.Min(1f, curDir.Y)));
+                        delta = (el1 - el0) * 2.5f;
+                    }
+                    _meshRotation = Quaternion.Normalize(
+                        _meshRotStartQuat * Quaternion.CreateFromAxisAngle(_meshRotationAxis, delta));
+                }
+
+                // Release: end drag or rotation and reset highlight.
+                if (spatialInputHandler.CheckForRelease())
+                {
+                    if (_isDraggingProduct)
+                    {
+                        _isDraggingProduct = false;
+                        Debug.WriteLine("[Drag] Dropped at " + _productPosition);
+                    }
+                    if (_isRotating)
+                    {
+                        _isRotating = false;
+                        Debug.WriteLine("[Rotate] Released");
+                    }
+                    if (_isDraggingMesh)
+                    {
+                        _isDraggingMesh = false;
+                        Debug.WriteLine("[MeshDrag] Dropped at " + _meshPosition);
+                    }
+                    if (_isRotatingMesh)
+                    {
+                        _isRotatingMesh = false;
+                        Debug.WriteLine("[MeshRotate] Released");
+                    }
+                    _manipulationHandles.SetHighlight(ManipulationZone.None);
+                }
+            }
+#endif
+
+#if DRAW_SAMPLE_CONTENT
+            // Poll for completed product load (safe to do from render thread).
+            if (appState == AppState.Loading && pendingProductLoad != null && pendingProductLoad.IsCompleted)
+            {
+                if (pendingProductLoad.IsFaulted)
+                {
+                    Debug.WriteLine("Product load failed: " + pendingProductLoad.Exception?.GetBaseException()?.Message);
+                    appState    = AppState.InputMode;
+                    inputBuffer = "";
+                }
+                else
+                {
+                    var product = pendingProductLoad.Result;
+
+                    // ── Save current product as a frozen instance before overwriting ──
+                    if (_productDims.X > 0 && _productDims.Y > 0 && _productDims.Z > 0)
+                    {
+                        var instance = new ProductInstance
+                        {
+                            Position = _productPosition,
+                            Rotation = _productRotation,
+                            Dimensions = _productDims,
+                            TextureSRV = _activeTextureSRV,
+                            DisplacementSRV = _activeDispSRV,
+                            SideFaceSRV = _activeSideSRV,
+                            ViewType = _activeViewType,
+                            MeshData = _activeMeshData,
+                            MeshPosition = _meshPosition,
+                            MeshRotation = _meshRotation,
+                        };
+                        instance.ContentBoundsVec = _activeContentBounds;
+                        _productInstances.Add(instance);
+
+                        // Transfer ownership to instance — don't dispose
+                        _activeTextureSRV = null;
+                        _activeDispSRV = null;
+                        _activeSideSRV = null;
+                        _activeMeshData = null;
+
+                        Debug.WriteLine("[Multi] Saved product instance #" + _productInstances.Count);
+                    }
+
+                    // Position the box 2 m in front of the user's current gaze.
+                    var boxPos = _lastHeadPosition + 2.0f * _lastHeadForward;
+                    productBoxRenderer.SetPosition(boxPos);
+                    productBoxRenderer.SetDimensions(product.WidthMeters, product.HeightMeters, product.DepthMeters);
+
+                    // Reset active sprite textures for the new product (placeholder).
+                    _activeTextureSRV?.Dispose();
+                    _activeTextureSRV = imageLoader.GetPlaceholder();
+                    _activeDispSRV?.Dispose();
+                    _activeDispSRV = null;
+                    _activeSideSRV?.Dispose();
+                    _activeSideSRV = null;
+                    _activeContentBounds = new System.Numerics.Vector4(0f, 0f, 1f, 1f);
+                    _activeViewType = ViewType.FrontOnly;
+
+                    // Cache position and dimensions for drag hit-testing.
+                    _productPosition = boxPos;
+                    _productDims     = new Vector3(product.WidthMeters, product.HeightMeters, product.DepthMeters);
+
+                    // Reset rotation for the new product.
+                    _productRotation = Quaternion.Identity;
+                    _isRotating      = false;
+                    productBoxRenderer.SetRotation(Quaternion.Identity);
+                    productSpriteRenderer.SetRotation(Quaternion.Identity);
+                    _manipulationHandles.SetHighlight(ManipulationZone.None);
+
+                    // Keep the keyboard visible so the user can immediately look up another product.
+                    keyboardInputHandler.ClearText();
+                    inputBuffer = "";
+
+                    appState = AppState.ShowingProduct;
+                    Debug.WriteLine("Loaded: " + product.ProductName +
+                        " W=" + product.WidthMeters + " H=" + product.HeightMeters + " D=" + product.DepthMeters);
+
+                    // Start 3D model fetch from the IKEA product page.
+                    _activeMeshData = null;
+                    _pending3DModelLoad = null;
+                    if (product.Has3DModel && !string.IsNullOrEmpty(product.ModelUrl))
+                    {
+                        Debug.WriteLine("[IKEA] Fetching 3D model from product page " + product.ModelUrl);
+                        _pending3DModelLoad = _modelService3D.FetchModelAsync(product.ModelUrl, CancellationToken.None);
+                    }
+
+                    // Start background image download + depth analysis.
+                    if (!string.IsNullOrEmpty(product.ImageUrl))
+                        StartImageLoad(product);
+                }
+                pendingProductLoad = null;
+            }
+
+            // Poll for completed IKEA GLB model load.
+            if (_pending3DModelLoad != null && _pending3DModelLoad.IsCompleted)
+            {
+                if (!_pending3DModelLoad.IsFaulted && _pending3DModelLoad.Result != null)
+                {
+                    _activeMeshData = _pending3DModelLoad.Result;
+                    _gltfMeshRenderer.SetMeshData(_activeMeshData);
+                    _meshDims = _activeMeshData.BoundsMeters;
+
+                    // Position the 3D model to the right of the box model
+                    _meshPosition = _productPosition + Vector3.Transform(
+                        new Vector3(_productDims.X * 0.5f + _meshDims.X * 0.5f + 0.05f, 0f, 0f),
+                        _productRotation);
+                    _meshRotation = _productRotation;
+
+                    Debug.WriteLine("[IKEA] 3D model loaded: " + _activeMeshData.Positions.Length + " verts, " + (_activeMeshData.Indices.Length / 3) + " tris");
+                    Debug.WriteLine("[IKEA] Mesh bounds (m): " + _meshDims.X.ToString("F3") + " x " + _meshDims.Y.ToString("F3") + " x " + _meshDims.Z.ToString("F3"));
+                    Debug.WriteLine("[IKEA] Product dims (m): " + _productDims.X.ToString("F3") + " x " + _productDims.Y.ToString("F3") + " x " + _productDims.Z.ToString("F3"));
+                }
+                else if (_pending3DModelLoad.IsFaulted)
+                {
+                    Debug.WriteLine("[IKEA] 3D model load failed: " + _pending3DModelLoad.Exception?.GetBaseException()?.Message);
+                }
+                _pending3DModelLoad = null;
+            }
+#endif
+
+            timer.Tick(() =>
+            {
+#if DRAW_SAMPLE_CONTENT
+                // Apply any image/displacement SRVs that arrived from the background task.
+                lock (_pendingImageLock)
+                {
+                    if (_pendingImageSRV != null)
+                    {
+                        _activeTextureSRV?.Dispose();
+                        _activeTextureSRV = _pendingImageSRV;
+                        _activeContentBounds = new System.Numerics.Vector4(
+                            _pendingBounds.MinU, _pendingBounds.MinV,
+                            _pendingBounds.MaxU, _pendingBounds.MaxV);
+                        _pendingImageSRV = null;
+                    }
+                    if (_pendingDispSRV != null)
+                    {
+                        _activeDispSRV?.Dispose();
+                        _activeDispSRV = _pendingDispSRV;
+                        _pendingDispSRV = null;
+                    }
+                    if (_pendingSideSRV != null)
+                    {
+                        _activeSideSRV?.Dispose();
+                        _activeSideSRV = _pendingSideSRV;
+                        _activeViewType = _pendingViewType;
+                        _pendingSideSRV = null;
+                    }
+                    else if (_pendingViewType == ViewType.FrontOnly)
+                    {
+                        _activeSideSRV?.Dispose();
+                        _activeSideSRV = null;
+                        _activeViewType = ViewType.FrontOnly;
+                    }
+                }
+
+                if (appState == AppState.ShowingProduct)
+                {
+                    productBoxRenderer.Update(timer);
+                    productSpriteRenderer.Update(timer);
+                    _manipulationHandles.SetTransform(_productPosition, _productDims, _productRotation);
+                    _manipulationHandles.Update();
+                    // Update dimension labels to follow the product
+                    _dimensionLabels.SetDimensions(_productDims.X, _productDims.Y, _productDims.Z);
+                    _dimensionLabels.SetPosition(_productPosition);
+                    _dimensionLabels.SetRotation(_productRotation);
+                    _dimensionLabels.Update();
+                }
+                else
+                    spinningCubeRenderer.Update(timer);
+#endif
+            });
+
+            if (!canCommitDirect3D11DepthBuffer)
+            {
+                // On versions of the platform that do not support the CommitDirect3D11DepthBuffer API, we can control
+                // image stabilization by setting a focus point with optional plane normal and velocity.
+                foreach (var cameraPose in prediction.CameraPoses)
+                {
+#if DRAW_SAMPLE_CONTENT
+                    // The HolographicCameraRenderingParameters class provides access to set
+                    // the image stabilization parameters.
+                    HolographicCameraRenderingParameters renderingParameters = holographicFrame.GetRenderingParameters(cameraPose);
+ 
+                    // SetFocusPoint informs the system about a specific point in your scene to
+                    // prioritize for image stabilization. The focus point is set independently
+                    // for each holographic camera. When setting the focus point, put it on or 
+                    // near content that the user is looking at.
+                    // In this example, we put the focus point at the center of the sample hologram.
+                    // You can also set the relative velocity and facing of the stabilization
+                    // plane using overloads of this method.
+                    if (stationaryReferenceFrame != null)
+                    {
+                        renderingParameters.SetFocusPoint(
+                            stationaryReferenceFrame.CoordinateSystem,
+                            spinningCubeRenderer.Position
+                            );
+                    }
+#endif
+                }
+            }
+
+            // The holographic frame will be used to get up-to-date view and projection matrices and
+            // to present the swap chain.
+            return holographicFrame;
+        }
+
+        /// <summary>
+        /// Renders the current frame to each holographic display, according to the 
+        /// current application and spatial positioning state. Returns true if the 
+        /// frame was rendered to at least one display.
+        /// </summary>
+        public bool Render(HolographicFrame holographicFrame)
+        {
+            // Don't try to render anything before the first Update.
+            if (timer.FrameCount == 0)
+            {
+                return false;
+            }
+
+            //
+            // TODO: Add code for pre-pass rendering here.
+            //
+            // Take care of any tasks that are not specific to an individual holographic
+            // camera. This includes anything that doesn't need the final view or projection
+            // matrix, such as lighting maps.
+            //
+
+            // Up-to-date frame predictions enhance the effectiveness of image stablization and
+            // allow more accurate positioning of holograms.
+            holographicFrame.UpdateCurrentPrediction();
+            HolographicFramePrediction prediction = holographicFrame.CurrentPrediction;
+
+            // Lock the set of holographic camera resources, then draw to each camera
+            // in this frame.
+            return deviceResources.UseHolographicCameraResources(
+                (Dictionary<uint, CameraResources> cameraResourceDictionary) =>
+            {
+                bool atLeastOneCameraRendered = false;
+
+                foreach (var cameraPose in prediction.CameraPoses)
+                {
+                    // This represents the device-based resources for a HolographicCamera.
+                    CameraResources cameraResources = cameraResourceDictionary[cameraPose.HolographicCamera.Id];
+
+                    // Get the device context.
+                    var context = deviceResources.D3DDeviceContext;
+                    var renderTargetView = cameraResources.BackBufferRenderTargetView;
+                    var depthStencilView = cameraResources.DepthStencilView;
+
+                    // Set render targets to the current holographic camera.
+                    context.OutputMerger.SetRenderTargets(depthStencilView, renderTargetView);
+
+                    // Placeholder view-projection matrix (keyboard handler simplified version doesn't use it)
+                    Matrix4x4 viewProjection = Matrix4x4.Identity;
+
+                    // Clear the back buffer and depth stencil view.
+                    if (canGetHolographicDisplayForCamera && 
+                        cameraPose.HolographicCamera.Display.IsOpaque)
+                    {
+                        SharpDX.Mathematics.Interop.RawColor4 cornflowerBlue = new SharpDX.Mathematics.Interop.RawColor4(0.392156899f, 0.58431375f, 0.929411829f, 1.0f);
+                        context.ClearRenderTargetView(renderTargetView, cornflowerBlue);
+                    }
+                    else
+                    {
+                        SharpDX.Mathematics.Interop.RawColor4 transparent = new SharpDX.Mathematics.Interop.RawColor4(0.0f, 0.0f, 0.0f, 0.0f);
+                        context.ClearRenderTargetView(renderTargetView, transparent);
+                    }
+                    context.ClearDepthStencilView(
+                        depthStencilView,
+                        SharpDX.Direct3D11.DepthStencilClearFlags.Depth | SharpDX.Direct3D11.DepthStencilClearFlags.Stencil,
+                        1.0f,
+                        0);
+
+                    //
+                    // TODO: Replace the sample content with your own content.
+                    //
+                    // Notes regarding holographic content:
+                    //    * For drawing, remember that you have the potential to fill twice as many pixels
+                    //      in a stereoscopic render target as compared to a non-stereoscopic render target
+                    //      of the same resolution. Avoid unnecessary or repeated writes to the same pixel,
+                    //      and only draw holograms that the user can see.
+                    //    * To help occlude hologram geometry, you can create a depth map using geometry
+                    //      data obtained via the surface mapping APIs. You can use this depth map to avoid
+                    //      rendering holograms that are intended to be hidden behind tables, walls,
+                    //      monitors, and so on.
+                    //    * On HolographicDisplays that are transparent, black pixels will appear transparent 
+                    //      to the user. On such devices, you should clear the screen to Transparent as shown 
+                    //      above. You should still use alpha blending to draw semitransparent holograms. 
+                    //
+
+
+                    // The view and projection matrices for each holographic camera will change
+                    // every frame. This function refreshes the data in the constant buffer for
+                    // the holographic camera indicated by cameraPose.
+                    if (stationaryReferenceFrame != null)
+                    {
+                        cameraResources.UpdateViewProjectionBuffer(deviceResources, cameraPose, stationaryReferenceFrame.CoordinateSystem);
+                    }
+
+                    // Attach the view/projection constant buffer for this camera to the graphics pipeline.
+                    bool cameraActive = cameraResources.AttachViewProjectionBuffer(deviceResources);
+
+#if DRAW_SAMPLE_CONTENT
+                    // Only render world-locked content when positional tracking is active.
+                    if (cameraActive)
+                    {
+                        if (appState == AppState.ShowingProduct)
+                        {
+                            // Render previously saved product instances (box + sprite)
+                            foreach (var inst in _productInstances)
+                            {
+                                productBoxRenderer.SetPosition(inst.Position);
+                                productBoxRenderer.SetDimensions(inst.Dimensions.X, inst.Dimensions.Y, inst.Dimensions.Z);
+                                productBoxRenderer.SetRotation(inst.Rotation);
+                                productBoxRenderer.Update(timer);  // upload transform to GPU
+                                productBoxRenderer.Render();
+
+                                // Render sprite for this instance if it has a texture
+                                if (inst.TextureSRV != null)
+                                {
+                                    productSpriteRenderer.ApplyInstanceState(
+                                        inst.Position, inst.Dimensions.X, inst.Dimensions.Y, inst.Dimensions.Z,
+                                        inst.Rotation,
+                                        inst.TextureSRV, inst.DisplacementSRV, inst.SideFaceSRV,
+                                        inst.ContentBoundsVec, inst.ViewType);
+                                    productSpriteRenderer.Update(timer);
+                                    productSpriteRenderer.Render();
+                                }
+
+                                // Render 3D mesh for this saved instance
+                                if (inst.MeshData != null)
+                                {
+                                    _gltfMeshRenderer.SetMeshData(inst.MeshData);
+                                    _gltfMeshRenderer.SetPosition(inst.MeshPosition);
+                                    _gltfMeshRenderer.SetRotation(inst.MeshRotation);
+                                    _gltfMeshRenderer.Update(timer);
+                                    _gltfMeshRenderer.Render();
+                                }
+                            }
+
+                            // Render the active (most recent) product
+                            productBoxRenderer.SetPosition(_productPosition);
+                            productBoxRenderer.SetDimensions(_productDims.X, _productDims.Y, _productDims.Z);
+                            productBoxRenderer.SetRotation(_productRotation);
+                            productBoxRenderer.Update(timer);  // upload transform to GPU
+                            productBoxRenderer.Render();
+                            // Render active product sprite with tracked SRVs
+                            if (_activeTextureSRV != null)
+                            {
+                                productSpriteRenderer.ApplyInstanceState(
+                                    _productPosition, _productDims.X, _productDims.Y, _productDims.Z,
+                                    _productRotation,
+                                    _activeTextureSRV, _activeDispSRV, _activeSideSRV,
+                                    _activeContentBounds, _activeViewType);
+                                productSpriteRenderer.Update(timer);
+                                productSpriteRenderer.Render();
+                            }
+
+                            // Render active 3D mesh at its independent position
+                            if (_activeMeshData != null)
+                            {
+                                _gltfMeshRenderer.SetMeshData(_activeMeshData);
+                                _gltfMeshRenderer.SetPosition(_meshPosition);
+                                _gltfMeshRenderer.SetRotation(_meshRotation);
+                                _gltfMeshRenderer.Update(timer);
+                                _gltfMeshRenderer.Render();
+                            }
+
+                            _manipulationHandles.Render();  // edge rotation handles (only visible when gazing)
+                            _dimensionLabels.Render();      // dimension labels in mm
+                        }
+                        else
+                        {
+                            // Even when not in ShowingProduct state, render saved instances
+                            foreach (var inst in _productInstances)
+                            {
+                                productBoxRenderer.SetPosition(inst.Position);
+                                productBoxRenderer.SetDimensions(inst.Dimensions.X, inst.Dimensions.Y, inst.Dimensions.Z);
+                                productBoxRenderer.SetRotation(inst.Rotation);
+                                productBoxRenderer.Update(timer);  // upload transform to GPU
+                                productBoxRenderer.Render();
+
+                                if (inst.TextureSRV != null)
+                                {
+                                    productSpriteRenderer.ApplyInstanceState(
+                                        inst.Position, inst.Dimensions.X, inst.Dimensions.Y, inst.Dimensions.Z,
+                                        inst.Rotation,
+                                        inst.TextureSRV, inst.DisplacementSRV, inst.SideFaceSRV,
+                                        inst.ContentBoundsVec, inst.ViewType);
+                                    productSpriteRenderer.Update(timer);
+                                    productSpriteRenderer.Render();
+                                }
+
+                                // Render 3D mesh for saved instances even outside ShowingProduct
+                                if (inst.MeshData != null)
+                                {
+                                    _gltfMeshRenderer.SetMeshData(inst.MeshData);
+                                    _gltfMeshRenderer.SetPosition(inst.MeshPosition);
+                                    _gltfMeshRenderer.SetRotation(inst.MeshRotation);
+                                    _gltfMeshRenderer.Update(timer);
+                                    _gltfMeshRenderer.Render();
+                                }
+                            }
+                            spinningCubeRenderer.Render(); // loading / input mode indicator
+                        }
+                        // Render keyboard handler (overlay on top of cube/product)
+                        if (keyboardInputHandler.IsVisible)
+                        {
+                            keyboardInputHandler.Render(context);
+                        }
+                        // Render search results dialog if visible
+                        if (_searchResultsDialog != null && _searchResultsDialog.IsVisible)
+                        {
+                            _searchResultsDialog.Render();
+                        }
+
+                        if (canCommitDirect3D11DepthBuffer)
+                        {
+                            // On versions of the platform that support the CommitDirect3D11DepthBuffer API, we can 
+                            // provide the depth buffer to the system, and it will use depth information to stabilize 
+                            // the image at a per-pixel level.
+                            HolographicCameraRenderingParameters renderingParameters = holographicFrame.GetRenderingParameters(cameraPose);
+                            SharpDX.Direct3D11.Texture2D depthBuffer = cameraResources.DepthBufferTexture2D;
+
+                            // Direct3D interop APIs are used to provide the buffer to the WinRT API.
+                            SharpDX.DXGI.Resource1 depthStencilResource = depthBuffer.QueryInterface<SharpDX.DXGI.Resource1>();
+                            SharpDX.DXGI.Surface2 depthDxgiSurface = new SharpDX.DXGI.Surface2(depthStencilResource, 0);
+                            IDirect3DSurface depthD3DSurface = InteropStatics.CreateDirect3DSurface(depthDxgiSurface.NativePointer);
+                            if (depthD3DSurface != null)
+                            {
+                                // Calling CommitDirect3D11DepthBuffer causes the system to queue Direct3D commands to 
+                                // read the depth buffer. It will then use that information to stabilize the image as
+                                // the HolographicFrame is presented.
+                                renderingParameters.CommitDirect3D11DepthBuffer(depthD3DSurface);
+                            }
+                        }
+                    }
+#endif
+                    atLeastOneCameraRendered = true;
+                }
+
+                return atLeastOneCameraRendered;
+            });
+        }
+
+        public void SaveAppState()
+        {
+            //
+            // TODO: Insert code here to save your app state.
+            //       This method is called when the app is about to suspend.
+            //
+            //       For example, store information in the SpatialAnchorStore.
+            //
+        }
+
+        public void LoadAppState()
+        {
+            //
+            // TODO: Insert code here to load your app state.
+            //       This method is called when the app resumes.
+            //
+            //       For example, load information from the SpatialAnchorStore.
+            //
+        }
+
+        public void OnPointerPressed()
+        {
+            this.pointerPressed = true;
+        }
+
+        /// <summary>
+        /// Notifies renderers that device resources need to be released.
+        /// </summary>
+        public void OnDeviceLost(Object sender, EventArgs e)
+        {
+#if DRAW_SAMPLE_CONTENT
+            spinningCubeRenderer.ReleaseDeviceDependentResources();
+            productBoxRenderer.ReleaseDeviceDependentResources();
+            if (productSpriteRenderer != null)
+                productSpriteRenderer.ReleaseDeviceDependentResources();
+            if (keyboardInputHandler != null)
+            {
+                keyboardInputHandler.ReleaseDeviceDependentResources();
+            }
+            if (_manipulationHandles != null)
+                _manipulationHandles.ReleaseDeviceDependentResources();
+            if (_dimensionLabels != null)
+                _dimensionLabels.ReleaseDeviceDependentResources();
+#endif
+        }
+
+        /// <summary>
+        /// Notifies renderers that device resources may now be recreated.
+        /// </summary>
+        public void OnDeviceRestored(Object sender, EventArgs e)
+        {
+#if DRAW_SAMPLE_CONTENT
+            spinningCubeRenderer.CreateDeviceDependentResourcesAsync();
+            productBoxRenderer.CreateDeviceDependentResourcesAsync();
+            if (productSpriteRenderer != null)
+                productSpriteRenderer.CreateDeviceDependentResourcesAsync();
+            if (keyboardInputHandler != null)
+            {
+                keyboardInputHandler.CreateDeviceDependentResourcesAsync();
+            }
+            if (_manipulationHandles != null)
+                _manipulationHandles.CreateDeviceDependentResourcesAsync();
+            if (_dimensionLabels != null)
+                _dimensionLabels.CreateDeviceDependentResourcesAsync();
+#endif
+        }
+
+        /// <summary>Receives a typed character from AppView when in InputMode.
+        /// HolographicKeyboard now owns the text buffer via CoreWindow.CharacterReceived,
+        /// so this only handles the case where the system keyboard is not active.</summary>
+        public void OnCharacterReceived(char c)
+        {
+            // HolographicKeyboard.CharacterReceived already fires for the same event
+            // and calls TextChanged which sets inputBuffer. Nothing to do here.
+        }
+
+        /// <summary>Receives a key-down event from AppView for Enter / Backspace / Escape.</summary>
+        public void OnKeyDown(Windows.System.VirtualKey key)
+        {
+            if (appState != AppState.InputMode && appState != AppState.ShowingProduct)
+                return;
+
+            if (key == Windows.System.VirtualKey.Enter || key == Windows.System.VirtualKey.Accept)
+            {
+                StartProductLoad();
+            }
+            else if (key == Windows.System.VirtualKey.Back)
+            {
+                if (inputBuffer.Length > 0)
+                    inputBuffer = inputBuffer.Substring(0, inputBuffer.Length - 1);
+            }
+            else if (key == Windows.System.VirtualKey.Escape)
+            {
+                inputBuffer = "";
+            }
+        }
+
+        /// <summary>
+        /// Slab-method ray vs. AABB test.  Returns true when the ray hits the box within
+        /// <paramref name="maxDist"/> metres and writes the entry distance to
+        /// <paramref name="hitDist"/>.
+        /// </summary>
+        private static bool GazeHitsBox(Vector3 rayOrigin, Vector3 rayDir,
+                                         Vector3 boxCenter, Vector3 halfExtents,
+                                         float maxDist, out float hitDist)
+        {
+            hitDist = 0f;
+            float tMin = 0f, tMax = maxDist;
+            float[] o = { rayOrigin.X, rayOrigin.Y, rayOrigin.Z };
+            float[] d = { rayDir.X,    rayDir.Y,    rayDir.Z    };
+            float[] c = { boxCenter.X, boxCenter.Y, boxCenter.Z };
+            float[] e = { halfExtents.X, halfExtents.Y, halfExtents.Z };
+            for (int i = 0; i < 3; i++)
+            {
+                if (Math.Abs(d[i]) < 1e-6f)
+                {
+                    if (o[i] < c[i] - e[i] || o[i] > c[i] + e[i]) return false;
+                }
+                else
+                {
+                    float t1 = (c[i] - e[i] - o[i]) / d[i];
+                    float t2 = (c[i] + e[i] - o[i]) / d[i];
+                    if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+                    tMin = Math.Max(tMin, t1);
+                    tMax = Math.Min(tMax, t2);
+                    if (tMin > tMax) return false;
+                }
+            }
+            hitDist = tMin;
+            return true;
+        }
+
+        private void StartProductLoad()
+        {
+            var productUrl = inputBuffer == null ? "" : inputBuffer.Trim();
+            if (!productUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                !productUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                Debug.WriteLine("Invalid IKEA product URL: '" + productUrl + "'");
+                return;
+            }
+            Debug.WriteLine("Loading IKEA product page: " + productUrl);
+            appState           = AppState.Loading;
+            inputBuffer        = "";
+            var cts            = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            pendingProductLoad = productRepository.GetProductAsync(productUrl, cts.Token);
+        }
+
+        /// <summary>
+        /// Fires a search query and displays results in the search dialog.
+        /// </summary>
+        private void StartProductSearch(string query)
+        {
+            if (string.IsNullOrWhiteSpace(query) || _productSearchService == null)
+                return;
+
+            Task.Run(async () =>
+            {
+                try
+                {
+                    var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                    var results = await _productSearchService.SearchAsync(query, 10, cts.Token);
+                    Debug.WriteLine("[Search] Got " + results.Count + " results for: " + query);
+                    if (results.Count > 0 && _searchResultsDialog != null)
+                    {
+                        // Position dialog near keyboard
+                        var pos = keyboardInputHandler.IsVisible
+                            ? _productPosition + new Vector3(0.4f, 0, 0)
+                            : _productPosition;
+                        _searchResultsDialog.Show(query, results, pos, Quaternion.Identity);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine("[Search] Error: " + ex.Message);
+                }
+            });
+        }
+
+        /// <summary>
+        /// Fire-and-forget: downloads the product image, runs depth analysis,
+        /// uploads both textures to the GPU, then stores them for pickup by
+        /// the render thread in Update().
+        /// </summary>
+        private void StartImageLoad(RenderableProduct product)
+        {
+            var url      = product.ImageUrl;
+            var depthM   = product.DepthMeters;
+            Task.Run(async () =>
+            {
+                var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+                try
+                {
+                    Debug.WriteLine("[Sprite] Downloading image: " + url);
+                    var loadResult = await imageLoader.DownloadAndDecodeAsync(url, cts.Token)
+                                                     .ConfigureAwait(false);
+                    if (loadResult == null)
+                    {
+                        Debug.WriteLine("[Sprite] Image download failed.");
+                        return;
+                    }
+
+                    // Depth displacement disabled: luminance-based pseudo-depth is unreliable for
+                    // mechanical products and causes smearing artifacts on the additive HoloLens display.
+                    SharpDX.Direct3D11.ShaderResourceView dispSrv = null;
+
+                    Debug.WriteLine("[Sprite] Depth analysis skipped (displacement disabled).");
+
+                    // Classify view angle and build per-face corrected textures
+                    var classification = ProductViewClassifier.Classify(
+                        loadResult.TightBgra, loadResult.Width, loadResult.Height);
+
+                    // Front face always uses the full original image so the complete product is
+                    // visible when looking straight on.  For 3/4-view images, additionally extract
+                    // the side-panel portion and render it on the +X / -X box face for depth effect.
+                    SharpDX.Direct3D11.ShaderResourceView frontSrv    = loadResult.Srv;
+                    ContentBounds                          frontBounds = loadResult.Bounds;
+                    SharpDX.Direct3D11.ShaderResourceView sideSrv     = null;
+
+                    if (classification.ViewType != ViewType.FrontOnly)
+                    {
+                        var faceTextures = ProductFaceTextureBuilder.Build(
+                            loadResult.TightBgra,
+                            (int)loadResult.Width,
+                            (int)loadResult.Height,
+                            classification,
+                            product.DepthMeters,
+                            product.HeightMeters);
+
+                        if (faceTextures.Side != null)
+                            sideSrv = imageLoader.UploadBGRA(
+                                faceTextures.Side.BgraPix,
+                                (uint)faceTextures.Side.Width,
+                                (uint)faceTextures.Side.Height);
+                    }
+
+                    // Hand all pending results to the render thread in one atomic assignment.
+                    lock (_pendingImageLock)
+                    {
+                        _pendingImageSRV = frontSrv;
+                        _pendingBounds   = frontBounds;
+                        _pendingDispSRV  = dispSrv;
+                        _pendingSideSRV  = sideSrv;
+                        _pendingViewType = classification.ViewType;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine("[Sprite] Image load error: " + ex.Message);
+                }
+            });
+        }
+
+        // ShowVirtualKeyboard() replaced by holographicKeyboard.Show()
+
+        void OnLocatabilityChanged(SpatialLocator sender, Object args)
+        {
+            switch (sender.Locatability)
+            {
+                case SpatialLocatability.Unavailable:
+                    // Holograms cannot be rendered.
+                    {
+                        String message = "Warning! Positional tracking is " + sender.Locatability + ".";
+                        Debug.WriteLine(message);
+                    }
+                    break;
+
+                // In the following three cases, it is still possible to place holograms using a
+                // SpatialLocatorAttachedFrameOfReference.
+                case SpatialLocatability.PositionalTrackingActivating:
+                // The system is preparing to use positional tracking.
+
+                case SpatialLocatability.OrientationOnly:
+                // Positional tracking has not been activated.
+
+                case SpatialLocatability.PositionalTrackingInhibited:
+                    // Positional tracking is temporarily inhibited. User action may be required
+                    // in order to restore positional tracking.
+                    break;
+
+                case SpatialLocatability.PositionalTrackingActive:
+                    // Positional tracking is active. World-locked content can be rendered.
+                    break;
+            }
+        }
+
+        public void OnCameraAdded(
+            HolographicSpace sender,
+            HolographicSpaceCameraAddedEventArgs args
+            )
+        {
+            Deferral deferral = args.GetDeferral();
+            HolographicCamera holographicCamera = args.Camera;
+
+            Task task1 = new Task(() =>
+            {
+                //
+                // TODO: Allocate resources for the new camera and load any content specific to
+                //       that camera. Note that the render target size (in pixels) is a property
+                //       of the HolographicCamera object, and can be used to create off-screen
+                //       render targets that match the resolution of the HolographicCamera.
+                //
+
+                // Create device-based resources for the holographic camera and add it to the list of
+                // cameras used for updates and rendering. Notes:
+                //   * Since this function may be called at any time, the AddHolographicCamera function
+                //     waits until it can get a lock on the set of holographic camera resources before
+                //     adding the new camera. At 60 frames per second this wait should not take long.
+                //   * A subsequent Update will take the back buffer from the RenderingParameters of this
+                //     camera's CameraPose and use it to create the ID3D11RenderTargetView for this camera.
+                //     Content can then be rendered for the HolographicCamera.
+                deviceResources.AddHolographicCamera(holographicCamera);
+
+                // Holographic frame predictions will not include any information about this camera until
+                // the deferral is completed.
+                deferral.Complete();
+            });
+            task1.Start();
+        }
+
+        public void OnCameraRemoved(
+            HolographicSpace sender,
+            HolographicSpaceCameraRemovedEventArgs args
+            )
+        {
+            Task task2 = new Task(() =>
+            {
+                //
+                // TODO: Asynchronously unload or deactivate content resources (not back buffer 
+                //       resources) that are specific only to the camera that was removed.
+                //
+            });
+            task2.Start();
+
+            // Before letting this callback return, ensure that all references to the back buffer 
+            // are released.
+            // Since this function may be called at any time, the RemoveHolographicCamera function
+            // waits until it can get a lock on the set of holographic camera resources before
+            // deallocating resources for this camera. At 60 frames per second this wait should
+            // not take long.
+            deviceResources.RemoveHolographicCamera(args.Camera);
+        }
+
+        public void OnGamepadAdded(Object o, Gamepad args)
+        {
+            foreach (var gamepadWithButtonState in gamepads)
+            {
+                if (args == gamepadWithButtonState.gamepad)
+                {
+                    // This gamepad is already in the list.
+                    return;
+                }
+            }
+
+            gamepads.Add(new GamepadWithButtonState(args, false));
+        }
+
+        public void OnGamepadRemoved(Object o, Gamepad args)
+        {
+            foreach (var gamepadWithButtonState in gamepads)
+            {
+                if (args == gamepadWithButtonState.gamepad)
+                {
+                    // This gamepad is in the list; remove it.
+                    gamepads.Remove(gamepadWithButtonState);
+                    return;
+                }
+            }
+        }
+
+        void OnHolographicDisplayIsAvailableChanged(Object o, Object args)
+        {
+            // Get the spatial locator for the default HolographicDisplay, if one is available.
+            SpatialLocator spatialLocator = null;
+            if (canGetDefaultHolographicDisplay)
+            {
+                HolographicDisplay defaultHolographicDisplay = HolographicDisplay.GetDefault();
+                if (defaultHolographicDisplay != null)
+                {
+                    spatialLocator = defaultHolographicDisplay.SpatialLocator;
+                }
+            }
+            else
+            {
+                spatialLocator = SpatialLocator.GetDefault();
+            }
+
+            if (this.spatialLocator != spatialLocator)
+            {
+                // If the spatial locator is disconnected or replaced, we should discard any state that was
+                // based on it.
+                if (this.spatialLocator != null)
+                {
+                    this.spatialLocator.LocatabilityChanged -= this.OnLocatabilityChanged;
+                    this.spatialLocator = null;
+                }
+
+                this.stationaryReferenceFrame = null;
+
+                if (spatialLocator != null)
+                {
+                    // Use the SpatialLocator from the default HolographicDisplay to track the motion of the device.
+                    this.spatialLocator = spatialLocator;
+
+                    // Respond to changes in the positional tracking state.
+                    this.spatialLocator.LocatabilityChanged += this.OnLocatabilityChanged;
+
+                    // The simplest way to render world-locked holograms is to create a stationary reference frame
+                    // based on a SpatialLocator. This is roughly analogous to creating a "world" coordinate system
+                    // with the origin placed at the device's position as the app is launched.
+                    this.stationaryReferenceFrame = this.spatialLocator.CreateStationaryFrameOfReferenceAtCurrentLocation();
+                }
+            }
+        }
+
+        // ── Voice input initialization ────────────────────────────────────────
+
+        /// <summary>
+        /// Initializes the speech recognition system and starts listening.
+        /// Called from SetHolographicSpace after renderers are created.
+        /// </summary>
+        private async void InitializeSpeechAsync()
+        {
+            try
+            {
+                await _speechHandler.InitializeAsync();
+                await _speechHandler.StartListeningAsync();
+                Debug.WriteLine("[Speech] Voice input ready - type or dictate an IKEA product URL");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("[Speech] Initialization failed: " + ex.Message);
+            }
+        }
+
+        // ── Multi-product support ─────────────────────────────────────────────
+
+        /// <summary>
+        /// Clears all products from the scene.
+        /// </summary>
+        private void ClearAllProducts()
+        {
+            foreach (var inst in _productInstances)
+            {
+                inst.DisposeTextures();
+            }
+            _productInstances.Clear();
+            _selectedProduct = null;
+            _productDims = Vector3.Zero;
+
+            // Dispose active product textures
+            _activeTextureSRV?.Dispose(); _activeTextureSRV = null;
+            _activeDispSRV?.Dispose();    _activeDispSRV = null;
+            _activeSideSRV?.Dispose();    _activeSideSRV = null;
+            
+            // Reset to input mode
+            appState = AppState.InputMode;
+            keyboardInputHandler.ClearText();
+            inputBuffer = "";
+            keyboardInputHandler.Show();
+            
+            Debug.WriteLine("[Multi] All products cleared");
+        }
+
+        /// <summary>
+        /// Adds a new product instance at the specified position.
+        /// </summary>
+        private void AddProductInstance(RenderableProduct product, Vector3 position)
+        {
+            var instance = new ProductInstance(product, position);
+            _productInstances.Add(instance);
+            _selectedProduct = instance;
+
+            Debug.WriteLine($"[Multi] Added product '{product.ProductName}' (total: {_productInstances.Count})");
+        }
+
+        /// <summary>
+        /// Finds the product instance closest to the given ray.
+        /// Returns null if no product is hit.
+        /// </summary>
+        private ProductInstance FindProductAtGaze(Vector3 rayOrigin, Vector3 rayDir, float maxDist)
+        {
+            ProductInstance closest = null;
+            float closestDist = maxDist;
+
+            foreach (var inst in _productInstances)
+            {
+                if (inst.RayIntersects(rayOrigin, rayDir, closestDist, out float hitDist))
+                {
+                    if (hitDist < closestDist)
+                    {
+                        closestDist = hitDist;
+                        closest = inst;
+                    }
+                }
+            }
+
+            return closest;
+        }
+    }
+}
+
