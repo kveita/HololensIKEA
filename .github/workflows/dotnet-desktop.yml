@@ -58,7 +58,7 @@ jobs:
 
       - name: Build and package Release x86
         run: >
-          msbuild HololensIKEA.csproj
+          msbuild HololensIKEA.sln
           /t:Publish
           /p:Configuration=Release
           /p:Platform=x86
