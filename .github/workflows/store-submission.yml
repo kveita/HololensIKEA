@@ -73,7 +73,7 @@ jobs:
         uses: microsoft/setup-msbuild@v3
 
       - name: NuGet restore
-        run: nuget restore HololensIKEA.sln
+        run: nuget restore HololensIKEA.csproj
 
       # ── Install UWP build tools ──────────────────────────────────────
       - name: Install Windows 10 SDK 19041 and UWP MSBuild tools
