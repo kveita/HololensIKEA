@@ -89,7 +89,7 @@ namespace HololensIKEA.Services
                 if (match.Success) raw = match.Value;
             }
             if (string.IsNullOrEmpty(raw)) return null;
-            raw = raw.Replace(""", "\"").Replace("&#x2F;", "/");
+            raw = raw.Replace("\"\"", "\"").Replace("&#x2F;", "/");
             if (Uri.TryCreate(raw, UriKind.Absolute, out var absolute)) return absolute;
             if (Uri.TryCreate(pageUri, raw, out var relative)) return relative;
             return null;
