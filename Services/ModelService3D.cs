@@ -30,10 +30,10 @@ namespace HololensIKEA.Services
     public sealed class ModelService3D
     {
         private static readonly Regex ModelAttribute = new Regex(
-            @"(?:src|gltf-model)\s*=\s*[\"']([^\"']*(?:\.glb|glb_draco)[^\"']*)[\"']",
+            @"(?:src|gltf-model)\s*=\s*[""']([^""']*(?:\.glb|glb_draco)[^""']*)[""']",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex AbsoluteModelUrl = new Regex(
-            @"https?://[^\"'<>\s]+(?:\.glb|glb_draco)[^\"'<>\s]*",
+            @"https?://[^""'<>\\s]+(?:\.glb|glb_draco)[^""'<>\\s]*",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         public async Task<GltfMeshData> FetchModelAsync(string productPageUrl, CancellationToken ct)
@@ -79,7 +79,7 @@ namespace HololensIKEA.Services
         public static Uri FindModelUrl(string html, Uri pageUri)
         {
             if (string.IsNullOrEmpty(html)) return null;
-            html = html.Replace("&amp;", "&").Replace("\\/", "/").Replace("\\u0026", "&");
+            html = html.Replace("&", "&").Replace("\\/", "/").Replace("\\u0026", "&");
             string raw = null;
             var match = ModelAttribute.Match(html);
             if (match.Success) raw = match.Groups[1].Value;
@@ -89,7 +89,7 @@ namespace HololensIKEA.Services
                 if (match.Success) raw = match.Value;
             }
             if (string.IsNullOrEmpty(raw)) return null;
-            raw = raw.Replace("&quot;", "\"").Replace("&#x2F;", "/");
+            raw = raw.Replace(""", "\"").Replace("&#x2F;", "/");
             if (Uri.TryCreate(raw, UriKind.Absolute, out var absolute)) return absolute;
             if (Uri.TryCreate(pageUri, raw, out var relative)) return relative;
             return null;

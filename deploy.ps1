@@ -20,21 +20,21 @@ if (-not $CertificatePath) {
 }
 
 function Get-MsBuildPath {
-    $default = 'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe'
+    $default = 'C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe'
     if (Test-Path $default) {
         return $default
     }
 
-    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\\Installer\\vswhere.exe'
     if (Test-Path $vswhere) {
-        $path = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\Current\Bin\MSBuild.exe' | Select-Object -First 1
+        $path = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\\Current\\Bin\\MSBuild.exe' | Select-Object -First 1
         if ($path -and (Test-Path $path)) {
             return $path
         }
 
         $installPath = & $vswhere -latest -products * -property installationPath
         if ($installPath) {
-            $candidate = Join-Path $installPath 'MSBuild\Current\Bin\MSBuild.exe'
+            $candidate = Join-Path $installPath 'MSBuild\\Current\\Bin\\MSBuild.exe'
             if (Test-Path $candidate) {
                 return $candidate
             }
@@ -45,9 +45,9 @@ function Get-MsBuildPath {
 }
 
 function Get-WinAppDeployCmdPath {
-    $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+    $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\\10\\bin'
     $candidate = Get-ChildItem $sdkRoot -Recurse -Filter WinAppDeployCmd.exe -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -match '\\x64\\' } |
+        Where-Object { $_.FullName -match '\\\\x64\\\\' } |
         Sort-Object FullName |
         Select-Object -Last 1 -ExpandProperty FullName
 
@@ -119,7 +119,7 @@ if (-not $appx) {
     throw "No .appx file found in $packageFolder"
 }
 
-$dependencyFolder = Join-Path $packageFolder 'Dependencies\x86'
+$dependencyFolder = Join-Path $packageFolder 'Dependencies\\x86'
 $dependencies = @(
     'Microsoft.NET.Native.Framework.1.3.appx',
     'Microsoft.NET.Native.Runtime.1.4.appx',
