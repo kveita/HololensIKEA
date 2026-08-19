@@ -1,6 +1,5 @@
-using SharpDX.Direct3D;
-using SharpDX.Direct3D11;
-using SharpDX.DXGI;
+using D3D11 = SharpDX.Direct3D11;
+using DXGI = SharpDX.DXGI;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
@@ -22,9 +21,9 @@ namespace HololensIKEA.Common
         public event EventHandler DeviceRestored;
         
         // Direct3D objects.
-        private Device3                         d3dDevice;
-        private DeviceContext3                  d3dContext;
-        private SharpDX.DXGI.Adapter3           dxgiAdapter;
+        private D3D11.Device3                         d3dDevice;
+        private D3D11.DeviceContext3                  d3dContext;
+        private DXGI.Adapter3           dxgiAdapter;
 
         // Direct3D interop objects.
         private IDirect3DDevice                 d3dInteropDevice;
@@ -116,7 +115,7 @@ namespace HololensIKEA.Common
             if (id != 0)
             {
                 // Create the DXGI factory.
-                using (var dxgiFactory4 = new Factory4())
+                using (var dxgiFactory4 = new DXGI.Factory4())
                 {
                     // Retrieve the adapter specified by the holographic space.
                     IntPtr adapterPtr;
@@ -124,7 +123,7 @@ namespace HololensIKEA.Common
 
                     if (adapterPtr != IntPtr.Zero)
                     {
-                        dxgiAdapter = new Adapter3(adapterPtr);
+                        dxgiAdapter = new DXGI.Adapter3(adapterPtr);
                     }
                 }
             }
@@ -177,18 +176,18 @@ namespace HololensIKEA.Common
             {
                 if (null != dxgiAdapter)
                 {
-                    using (var device = new Device(dxgiAdapter, creationFlags, featureLevels))
+                    using (var device = new D3D11.Device(dxgiAdapter, creationFlags, featureLevels))
                     {
                         // Store pointers to the Direct3D 11.1 API device.
-                        d3dDevice = this.ToDispose(device.QueryInterface<Device3>());
+                        d3dDevice = this.ToDispose(device.QueryInterface<D3D11.Device3>());
                     }
                 }
                 else
                 {
-                    using (var device = new Device(DriverType.Hardware, creationFlags, featureLevels))
+                    using (var device = new D3D11.Device(DriverType.Hardware, creationFlags, featureLevels))
                     {
                         // Store a pointer to the Direct3D device.
-                        d3dDevice = this.ToDispose(device.QueryInterface<Device3>());
+                        d3dDevice = this.ToDispose(device.QueryInterface<D3D11.Device3>());
                     }
                 }
             }
@@ -197,9 +196,9 @@ namespace HololensIKEA.Common
                 // If the initialization fails, fall back to the WARP device.
                 // For more information on WARP, see: 
                 // http://go.microsoft.com/fwlink/?LinkId=286690
-                using (var device = new Device(DriverType.Warp, creationFlags, featureLevels))
+                using (var device = new D3D11.Device(DriverType.Warp, creationFlags, featureLevels))
                 {
-                    d3dDevice = this.ToDispose(device.QueryInterface<Device3>());
+                    d3dDevice = this.ToDispose(device.QueryInterface<D3D11.Device3>());
                 }
             }
 
@@ -394,12 +393,12 @@ namespace HololensIKEA.Common
 
 #region Property accessors
 
-        public Device3 D3DDevice
+        public D3D11.Device3 D3DDevice
         {
             get { return d3dDevice; }
         }
 
-        public DeviceContext3 D3DDeviceContext
+        public D3D11.DeviceContext3 D3DDeviceContext
         {
             get { return d3dContext; }
         }
