@@ -1,5 +1,6 @@
 using D3D11 = SharpDX.Direct3D11;
 using DXGI = SharpDX.DXGI;
+using SharpDX.Direct3D;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
