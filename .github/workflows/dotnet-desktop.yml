@@ -1,9 +1,15 @@
 # Builds a signed Release .appxupload and uploads it as a workflow artifact.
 # Runs on every push to master (not on pull-requests).
 # No secrets required: a fresh self-signed certificate is generated per run.
-# For Store submission see store-submission.yml.
+# For Store submission see dotnet.yml.
 #
 # To sideload: download the artifact and deploy via WinAppDeployCmd or Device Portal.
+#
+# On manual trigger with action=submit:
+# - Auto-increments Package.appxmanifest Identity Version (4th segment stays 0)
+# - Builds Store-compatible .appxupload
+# - Commits version bump back to repo
+# - Creates GitHub release with .appx attached
 
 name: UWP Package
 
@@ -11,10 +17,21 @@ on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      action:
+        description: 'Package action'
+        required: true
+        default: 'package'
+        type: choice
+        options:
+          - package      # Build + upload artifact only
+          - submit       # Build + auto-increment version + commit + create GitHub release
 
 jobs:
   package:
     runs-on: windows-2022
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -56,6 +73,35 @@ jobs:
             -FilePath "${{ github.workspace }}\HololensIKEA_TemporaryKey.pfx" `
             -Password $pwd
 
+      # Auto-increment package version (submit runs only)
+      # Microsoft Store requires the 4th segment (revision) to be 0.
+      # The bump is applied to the working tree BEFORE the build so the
+      # package carries the new version; it is committed back to the repo
+      # after a successful run (see 'Commit version bump').
+      - name: Auto-increment package version
+        if: github.event.inputs.action == 'submit'
+        shell: pwsh
+        run: |
+          $manifestPath = "${{ github.workspace }}\Package.appxmanifest"
+          $manifest = [xml](Get-Content $manifestPath)
+          $current = [Version]$manifest.Package.Identity.Version
+          $next = "{0}.{1}.{2}.0" -f $current.Major, $current.Minor, ($current.Build + 1)
+          $manifest.Package.Identity.Version = $next
+          $manifest.Save($manifestPath)
+          "NEXT_VERSION=$next" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Bumped package version: $($current.ToString()) -> $next"
+
+      - name: Validate manifest version for Store
+        if: github.event.inputs.action == 'submit'
+        shell: pwsh
+        run: |
+          $manifest = [xml](Get-Content "${{ github.workspace }}\Package.appxmanifest")
+          $version = [Version]$manifest.Package.Identity.Version
+          if ($version.Revision -ne 0) {
+            Write-Error "Package.appxmanifest Identity Version '$version' is invalid for Store submit. The 4th segment (revision) must be 0."
+          }
+          Write-Host "Store-compatible package version: $version"
+
       - name: Build and package Release x86
         run: >
           msbuild HololensIKEA.sln
@@ -88,3 +134,51 @@ jobs:
             AppPackages/**/Install.ps1
             AppPackages/**/Add-AppDevPackage.ps1
           if-no-files-found: error
+
+      # Commit version bump (only after a successful submit)
+      # Commit Package.appxmanifest back to master so the repo always matches
+      # the last submitted version and the next run increments above it.
+      - name: Commit version bump
+        if: github.event.inputs.action == 'submit'
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Package.appxmanifest
+          git commit -m "chore: bump version to $env:NEXT_VERSION for release [skip ci]" -q
+          git push origin HEAD:${{ github.ref_name }}
+          Write-Host "Committed and pushed Package.appxmanifest (v$env:NEXT_VERSION)"
+
+      # Create GitHub release (only after a successful submit)
+      - name: Create GitHub release
+        if: github.event.inputs.action == 'submit'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v$env:NEXT_VERSION"
+          $pkg = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
+            -Recurse -Filter "*.appx" `
+            Sort-Object LastWriteTime -Descending `
+            Select-Object -First 1
+          if (-not $pkg) {
+            Write-Error "No .appx package found in AppPackages/."
+          }
+
+          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/$($pkg.Name)"
+          $notes = @(
+            "Sideload package release for HoloLens.",
+            "",
+            "Direct .appx download: [$($pkg.Name)]($downloadUrl)",
+            "",
+            "Package version: $env:NEXT_VERSION"
+          ) -join "`n"
+
+          Write-Host "Creating release $tag with package: $($pkg.Name)"
+          $bumpSha = git rev-parse HEAD
+          gh release create $tag `
+            --title "HololensIKEA $tag" `
+            --notes $notes `
+            --target $bumpSha `
+            "$($pkg.FullName)"
+          Write-Host "Release $tag created: https://github.com/turbolego/HololensIKEA/releases/tag/$tag"
