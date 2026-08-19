@@ -1,5 +1,6 @@
 using SharpDX.Direct3D;
 using SharpDX.Direct3D11;
+using SharpDX.DXGI;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
@@ -115,15 +116,15 @@ namespace HololensIKEA.Common
             if (id != 0)
             {
                 // Create the DXGI factory.
-                using (var dxgiFactory4 = new SharpDX.DXGI.Factory4())
+                using (var dxgiFactory4 = new Factory4())
                 {
                     // Retrieve the adapter specified by the holographic space.
                     IntPtr adapterPtr;
-                    dxgiFactory4.EnumAdapterByLuid((long)id, InteropStatics.IDXGIAdapter3, out adapterPtr);
+                    dxgiFactory4.EnumAdapterByLuid((long)id, typeof(Adapter3).GUID, out adapterPtr);
 
                     if (adapterPtr != IntPtr.Zero)
                     {
-                        dxgiAdapter = new SharpDX.DXGI.Adapter3(adapterPtr);
+                        dxgiAdapter = new Adapter3(adapterPtr);
                     }
                 }
             }
@@ -222,7 +223,7 @@ namespace HololensIKEA.Common
 
                 // Store a pointer to the DXGI adapter.
                 // This is for the case of no preferred DXGI adapter, or fallback to WARP.
-                dxgiAdapter = this.ToDispose(dxgiDevice.Adapter.QueryInterface<SharpDX.DXGI.Adapter3>());
+                dxgiAdapter = this.ToDispose(dxgiDevice.Adapter.QueryInterface<Adapter3>());
             }
 
             // Check for device support for the optional feature that allows setting the render target array index from the vertex shader stage.
