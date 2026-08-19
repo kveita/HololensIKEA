@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -130,7 +131,7 @@ namespace HololensIKEA.Services
             var indices = new List<ushort>();
             foreach (var mesh in meshes)
             {
-                foreach (var primitive in (mesh["primitives"] as JArray) ?? new JArray())
+                foreach (var primitive in ((IEnumerable)(mesh["primitives"] as JArray ?? new JArray())).Cast<JObject>())
                 {
                     var attrs = primitive["attributes"];
                     var posIndex = attrs?["POSITION"]?.Value<int>();
