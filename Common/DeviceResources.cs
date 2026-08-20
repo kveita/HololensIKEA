@@ -115,18 +115,8 @@ namespace HololensIKEA.Common
             // adapter the app can use.
             if (id != 0)
             {
-                // Create the DXGI factory.
-                using (var dxgiFactory4 = new DXGI.Factory4())
-                {
-                    // Retrieve the adapter specified by the holographic space.
-                    IntPtr adapterPtr;
-                    dxgiFactory4.EnumAdapterByLuid((long)id, typeof(Adapter3).GUID, out adapterPtr);
-
-                    if (adapterPtr != IntPtr.Zero)
-                    {
-                        dxgiAdapter = new DXGI.Adapter3(adapterPtr);
-                    }
-                }
+                this.RemoveAndDispose(ref dxgiAdapter);
+                dxgiAdapter = FindAdapterByLuidOrDefault((long)id);
             }
             else
             {
@@ -136,6 +126,49 @@ namespace HololensIKEA.Common
             CreateDeviceResources();
 
             holographicSpace.SetDirect3D11Device(d3dInteropDevice);
+        }
+
+        private DXGI.Adapter3 FindAdapterByLuidOrDefault(long luid)
+        {
+            using (var dxgiFactory2 = new DXGI.Factory2())
+            {
+                for (int i = 0; ; i++)
+                {
+                    DXGI.Adapter1 candidate = null;
+
+                    try
+                    {
+                        candidate = dxgiFactory2.GetAdapter1(i);
+                    }
+                    catch
+                    {
+                        break;
+                    }
+
+                    var description = candidate.Description1;
+                    if (description.Luid == luid)
+                    {
+                        using (candidate)
+                        {
+                            return this.ToDispose(candidate.QueryInterface<DXGI.Adapter3>());
+                        }
+                    }
+
+                    candidate.Dispose();
+                }
+
+                try
+                {
+                    using (var defaultAdapter = dxgiFactory2.GetAdapter1(0))
+                    {
+                        return this.ToDispose(defaultAdapter.QueryInterface<DXGI.Adapter3>());
+                    }
+                }
+                catch
+                {
+                    return null;
+                }
+            }
         }
 
 
@@ -148,13 +181,13 @@ namespace HololensIKEA.Common
 
             // This flag adds support for surfaces with a different color channel ordering
             // than the API default. It is required for compatibility with Direct2D.
-            DeviceCreationFlags creationFlags = DeviceCreationFlags.BgraSupport;
+            D3D11.DeviceCreationFlags creationFlags = D3D11.DeviceCreationFlags.BgraSupport;
 
 #if DEBUG
             if (DirectXHelper.SdkLayersAvailable())
             {
                 // If the project is in a debug build, enable debugging via SDK Layers with this flag.
-                creationFlags |= DeviceCreationFlags.Debug;
+                creationFlags |= D3D11.DeviceCreationFlags.Debug;
             }
 #endif
 
@@ -223,7 +256,7 @@ namespace HololensIKEA.Common
 
                 // Store a pointer to the DXGI adapter.
                 // This is for the case of no preferred DXGI adapter, or fallback to WARP.
-                dxgiAdapter = this.ToDispose(dxgiDevice.Adapter.QueryInterface<Adapter3>());
+                dxgiAdapter = this.ToDispose(dxgiDevice.Adapter.QueryInterface<DXGI.Adapter3>());
             }
 
             // Check for device support for the optional feature that allows setting the render target array index from the vertex shader stage.
