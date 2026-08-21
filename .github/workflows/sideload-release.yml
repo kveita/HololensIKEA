@@ -122,23 +122,48 @@ jobs:
           $packageDir = $appx.DirectoryName
           $zipPath = Join-Path "${{ github.workspace }}" "HololensIKEA_$($env:RELEASE_VERSION)_x86_sideload_bundle.zip"
 
-          $items = @()
-          $depDir = Join-Path $packageDir "Dependencies"
-          if (Test-Path $depDir) { $items += $depDir }
+          # Always include the sideloadable app package itself.
+          $items = @($appx.FullName)
 
+          # Include dependency packages if the build emitted them.
+          $depDir = Join-Path $packageDir "Dependencies"
+          if (Test-Path $depDir) {
+            $items += (Get-ChildItem -Path $depDir -Recurse -File | ForEach-Object { $_.FullName })
+          }
+
+          # Include generated install scripts when available.
           $installScript = Join-Path $packageDir "Install.ps1"
           if (Test-Path $installScript) { $items += $installScript }
 
           $addScript = Join-Path $packageDir "Add-AppDevPackage.ps1"
           if (Test-Path $addScript) { $items += $addScript }
 
+          # Include certificate from package folder if present, otherwise use
+          # the certificate generated earlier in this workflow.
           $cerInPackage = Get-ChildItem -Path $packageDir -Filter "*.cer" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($cerInPackage) { $items += $cerInPackage.FullName }
+          if ($cerInPackage) {
+            $items += $cerInPackage.FullName
+          } elseif (Test-Path "${{ github.workspace }}\HololensIKEA_TemporaryKey.cer") {
+            $items += "${{ github.workspace }}\HololensIKEA_TemporaryKey.cer"
+          }
+
+          # Some UWP outputs do not emit install scripts; generate a simple
+          # fallback script so the sideload bundle remains deployable.
+          if (-not (Test-Path $installScript)) {
+            $installScript = Join-Path "${{ github.workspace }}" "Install.ps1"
+            @"
+Add-AppxPackage -Path `"$($appx.FullName)`"
+"@ | Set-Content -Path $installScript
+            $items += $installScript
+          }
+
+          # Keep zip input deterministic and avoid duplicate entries.
+          $items = $items | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
 
           if ($items.Count -gt 0) {
             Compress-Archive -Path $items -DestinationPath $zipPath -Force
           } else {
-            throw "No dependency/install assets found to bundle for sideloading."
+            throw "No files found to bundle for sideloading."
           }
 
           "appx_path=$($appx.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
