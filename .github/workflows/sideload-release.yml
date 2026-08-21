@@ -110,13 +110,13 @@ jobs:
         shell: pwsh
         run: |
           $appx = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
-            -Recurse -Filter "*.appx" |
+            -Recurse -Filter "*.appx" `
             Where-Object {
               $_.Name -like "HololensIKEA_*.appx" -and
               $_.Name -notlike "*Bundle*" -and
               $_.FullName -notmatch "\\Dependencies\\"
-            } |
-            Sort-Object LastWriteTime -Descending |
+            } `
+            Sort-Object LastWriteTime -Descending `
             Select-Object -First 1
 
           if (-not $appx) {
@@ -155,7 +155,7 @@ jobs:
           # fallback script so the sideload bundle remains deployable.
           if (-not (Test-Path $installScript)) {
             $installScript = Join-Path "${{ github.workspace }}" "Install.ps1"
-            Set-Content -Path $installScript -Value "Add-AppxPackage -Path `"$($appx.FullName)`\""
+            Set-Content -Path $installScript -Value "Add-AppxPackage -Path `"$($appx.FullName)`""
             $items += $installScript
           }
 
@@ -170,7 +170,8 @@ jobs:
 
           "appx_path=$($appx.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "appx_name=$($appx.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "sideload_zip=$($zipPath -replace '\\\\', '/')" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $sp = $zipPath.Replace('\', '/')
+          "sideload_zip=$sp" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Upload sideload artifacts
         uses: actions/upload-artifact@v7
