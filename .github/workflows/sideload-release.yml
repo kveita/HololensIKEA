@@ -94,11 +94,11 @@ jobs:
       - name: Build signed sideload package (Release x86)
         run: >
           msbuild HololensIKEA.csproj
+          /t:Publish
           /p:Configuration=Release
           /p:Platform=x86
           /p:AppxBundle=Never
           /p:UapAppxPackageBuildMode=SideloadOnly
-          /p:GenerateAppxPackageOnBuild=true
           /p:AppxPackageDir=AppPackages\
           /p:AppxPackageSigningEnabled=true
           /p:PackageCertificateKeyFile=${{ github.workspace }}\HololensIKEA_TemporaryKey.pfx
