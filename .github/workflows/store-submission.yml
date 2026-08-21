@@ -283,7 +283,11 @@ jobs:
           if (-not $pkg) {
             Write-Error "No .appx package found in AppPackages/."
           }
+          if (-not $pkg.Name.EndsWith('.appx')) {
+            Write-Error "Expected .appx package for release description link, got '$($pkg.Name)'."
+          }
 
+          $title = "HololensIKEA $tag"
           $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/$($pkg.Name)"
           $notes = @(
             "Sideload package release for HoloLens.",
@@ -293,11 +297,19 @@ jobs:
             "Microsoft Store submission continues to use the .appxupload package."
           ) -join "`n"
 
-          Write-Host "Creating release $tag with package: $($pkg.Name)"
-          $bumpSha = git rev-parse HEAD
-          gh release create $tag `
-            --title "HololensIKEA $tag" `
-            --notes $notes `
-            --target $bumpSha `
-            "$($pkg.FullName)"
-          Write-Host "Release $tag created: https://github.com/turbolego/HololensIKEA/releases/tag/$tag"
+          gh release view $tag > $null 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists. Updating asset and description."
+            gh release upload $tag "$($pkg.FullName)" --clobber
+            gh release edit $tag --title $title --notes $notes
+          } else {
+            Write-Host "Creating release $tag with package: $($pkg.Name)"
+            $bumpSha = git rev-parse HEAD
+            gh release create $tag `
+              --title $title `
+              --notes $notes `
+              --target $bumpSha `
+              "$($pkg.FullName)"
+          }
+
+          Write-Host "Release ready: https://github.com/turbolego/HololensIKEA/releases/tag/$tag"
