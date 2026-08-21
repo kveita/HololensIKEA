@@ -170,7 +170,7 @@ jobs:
 
           "appx_path=$($appx.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "appx_name=$($appx.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "sideload_zip=$zipPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "sideload_zip=$($zipPath -replace '\\\\', '/')" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Upload sideload artifacts
         uses: actions/upload-artifact@v7
