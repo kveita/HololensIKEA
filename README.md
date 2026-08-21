@@ -68,7 +68,9 @@ The helper discovers the HoloLens through the Remote NDIS USB connection and ins
 
 ## Microsoft Store packaging
 
-The repository includes three Windows GitHub Actions workflows. `dotnet.yml` performs a compile check, `dotnet-desktop.yml` creates a signed x86 `.appxupload` artifact, and `store-submission.yml` performs Store-compatible version validation, packaging, optional Windows App Certification Kit validation, and optional Partner Center submission. Store submission requires the repository secrets documented in the workflow, including the Store app ID and Azure/Partner Center credentials.
+The repository includes four Windows GitHub Actions workflows. `dotnet.yml` performs a compile check, `dotnet-desktop.yml` creates a signed x86 `.appxupload` artifact, `sideload-release.yml` creates GitHub Releases with sideloadable `.appx` assets on version tags, and `store-submission.yml` performs Store-compatible version validation, packaging, optional Windows App Certification Kit validation, and optional Partner Center submission. Store submission requires the repository secrets documented in the workflow, including the Store app ID and Azure/Partner Center credentials.
+
+To create a sideload release, push a tag matching `v*.*.*` or `v*.*.*.*` where the numeric part matches `<Identity Version>` in `Package.appxmanifest`. The release includes the signed `.appx`, a dependency/install bundle zip, and the public `.cer` certificate.
 
 The app manifest uses the HoloLens 1-compatible `Windows.Universal` target family, requests `internetClient` for IKEA page and model downloads, and packages the x86 architecture for the device. The package identity and publisher must remain aligned with the Microsoft Store product configured in Partner Center before the first submission.
 
