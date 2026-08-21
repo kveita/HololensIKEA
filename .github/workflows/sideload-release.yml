@@ -1,0 +1,226 @@
+name: Sideload Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "v*.*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (example: v1.0.1.0)"
+        required: false
+        type: string
+
+jobs:
+  release:
+    runs-on: windows-2022
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Resolve release tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            if (-not [string]::IsNullOrWhiteSpace("${{ github.event.inputs.tag }}")) {
+              $tag = "${{ github.event.inputs.tag }}"
+            }
+          }
+
+          if ($tag -notmatch '^v\d+\.\d+\.\d+(\.\d+)?$') {
+            throw "Release tag '$tag' is invalid. Expected format: vMajor.Minor.Build(.Revision)."
+          }
+
+          $version = $tag.Substring(1)
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Resolved release tag: $tag"
+
+      - name: Validate manifest version matches tag
+        shell: pwsh
+        run: |
+          $manifest = [xml](Get-Content "${{ github.workspace }}\\Package.appxmanifest")
+          $manifestVersion = $manifest.Package.Identity.Version
+          if ($manifestVersion -ne "$env:RELEASE_VERSION") {
+            throw "Package.appxmanifest version '$manifestVersion' does not match release tag version '$env:RELEASE_VERSION'."
+          }
+          Write-Host "Manifest version matches release tag: $manifestVersion"
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: NuGet restore
+        run: nuget restore HololensIKEA.csproj
+
+      - name: Install Windows 10 SDK 19041 and UWP MSBuild tools
+        shell: pwsh
+        run: |
+          $vswhere   = "${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vswhere.exe"
+          $vsPath    = & $vswhere -latest -products * -property installationPath
+          $installer = "${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vs_installer.exe"
+          & $installer modify `
+            --installPath "$vsPath" `
+            --add Microsoft.VisualStudio.Component.Windows10SDK.19041 `
+            --add Microsoft.VisualStudio.ComponentGroup.UWP.MSBuild `
+            --quiet --norestart --force
+          if ($LASTEXITCODE -notin @(0, 3010)) { exit $LASTEXITCODE }
+
+      - name: Create signing certificate
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Type Custom `
+            -Subject "CN=BB1A7F2A-A87C-44C8-8C14-84C6486E7E75" `
+            -KeyUsage DigitalSignature `
+            -FriendlyName "HololensIKEA" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3","2.5.29.19={text}")
+
+          $pwd = ConvertTo-SecureString -String "ci" -Force -AsPlainText
+          $pfxPath = "${{ github.workspace }}\\HololensIKEA_TemporaryKey.pfx"
+          $cerPath = "${{ github.workspace }}\\HololensIKEA_TemporaryKey.cer"
+
+          Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $pwd | Out-Null
+          Export-Certificate -Cert $cert -FilePath $cerPath | Out-Null
+
+          "PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CER_PATH=$cerPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build signed sideload package (Release x86)
+        run: >
+          msbuild HololensIKEA.csproj
+          /t:Publish
+          /p:Configuration=Release
+          /p:Platform=x86
+          /p:AppxBundle=Never
+          /p:UapAppxPackageBuildMode=SideloadOnly
+          /p:AppxPackageDir=AppPackages\
+          /p:AppxPackageSigningEnabled=true
+          /p:PackageCertificateKeyFile=${{ github.workspace }}\HololensIKEA_TemporaryKey.pfx
+          /p:PackageCertificatePassword=ci
+          /p:PackageCertificateThumbprint=""
+
+      - name: Collect release assets
+        id: collect_assets
+        shell: pwsh
+        run: |
+          $appx = Get-ChildItem -Path "${{ github.workspace }}\\AppPackages" -Recurse -Filter "*.appx" |
+            Where-Object {
+              $_.Name -like "HololensIKEA_*.appx" -and
+              $_.Name -notlike "*Bundle*" -and
+              $_.FullName -notmatch "\\\\Dependencies\\\\"
+            } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+          if (-not $appx) {
+            throw "No sideload .appx package found in AppPackages/."
+          }
+
+          $packageDir = $appx.DirectoryName
+          $zipPath = Join-Path "${{ github.workspace }}" "HololensIKEA_$($env:RELEASE_VERSION)_x86_sideload_bundle.zip"
+
+          # Always include the sideloadable app package itself.
+          $items = @($appx.FullName)
+
+          # Include dependency packages if the build emitted them.
+          $depDir = Join-Path $packageDir "Dependencies"
+          if (Test-Path $depDir) {
+            $items += (Get-ChildItem -Path $depDir -Recurse -File | ForEach-Object { $_.FullName })
+          }
+
+          # Include generated install scripts when available.
+          $installScript = Join-Path $packageDir "Install.ps1"
+          if (Test-Path $installScript) { $items += $installScript }
+
+          $addScript = Join-Path $packageDir "Add-AppDevPackage.ps1"
+          if (Test-Path $addScript) { $items += $addScript }
+
+          # Include certificate from package folder if present, otherwise use
+          # the certificate generated earlier in this workflow.
+          $cerInPackage = Get-ChildItem -Path $packageDir -Filter "*.cer" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($cerInPackage) {
+            $items += $cerInPackage.FullName
+          } elseif (Test-Path "${{ github.workspace }}\\HololensIKEA_TemporaryKey.cer") {
+            $items += "${{ github.workspace }}\\HololensIKEA_TemporaryKey.cer"
+          }
+
+          # Some UWP outputs do not emit install scripts; generate a simple
+          # fallback script so the sideload bundle remains deployable.
+          if (-not (Test-Path $installScript)) {
+            $installScript = Join-Path "${{ github.workspace }}" "Install.ps1"
+            Set-Content -Path $installScript -Value "Add-AppxPackage -Path `"$($appx.FullName)`""
+            $items += $installScript
+          }
+
+          # Keep zip input deterministic and avoid duplicate entries.
+          $items = $items | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+
+          if ($items.Count -gt 0) {
+            Compress-Archive -Path $items -DestinationPath $zipPath -Force
+          } else {
+            throw "No files found to bundle for sideloading."
+          }
+
+          "appx_path=$($appx.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "appx_name=$($appx.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $sp = $zipPath.Replace('\', '/')
+          "sideload_zip=$sp" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Upload sideload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: HololensIKEA-sideload-x86
+          path: |
+            ${{ steps.collect_assets.outputs.appx_path }}
+            ${{ steps.collect_assets.outputs.sideload_zip }}
+            ${{ github.workspace }}/HololensIKEA_TemporaryKey.cer
+          if-no-files-found: error
+
+      - name: Publish GitHub release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "$env:RELEASE_TAG"
+          $title = "HololensIKEA $tag"
+          $appxPath = "${{ steps.collect_assets.outputs.appx_path }}"
+          $appxName = "${{ steps.collect_assets.outputs.appx_name }}"
+          $bundleZip = "${{ steps.collect_assets.outputs.sideload_zip }}"
+          $cerPath = "${{ github.workspace }}\\HololensIKEA_TemporaryKey.cer"
+          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/$appxName"
+
+          $notes = @(
+            "Sideload package release for HoloLens.",
+            "",
+            "Direct .appx download: [$appxName]($downloadUrl)",
+            "",
+            "Includes a sideload bundle zip with dependencies and install scripts.",
+            "Package version: $env:RELEASE_VERSION"
+          ) -join "`n"
+
+          gh release view $tag > $null 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists. Updating assets and notes."
+            gh release upload $tag "$appxPath" "$bundleZip" "$cerPath" --clobber
+            gh release edit $tag --title $title --notes $notes
+          } else {
+            Write-Host "Creating release $tag"
+            gh release create $tag `
+              --title $title `
+              --notes $notes `
+              --target "${{ github.sha }}" `
+              "$appxPath" "$bundleZip" "$cerPath"
+          }
+
+      - name: Remove signing certificate files
+        if: always()
+        shell: pwsh
+        run: |
+          Remove-Item -Path "$env:PFX_PATH" -ErrorAction SilentlyContinue
+          Remove-Item -Path "$env:CER_PATH" -ErrorAction SilentlyContinue
