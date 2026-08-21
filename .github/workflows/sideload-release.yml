@@ -1,5 +1,4 @@
 name: Sideload Release
-
 on:
   push:
     tags:
