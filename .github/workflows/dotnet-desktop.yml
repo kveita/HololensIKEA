@@ -105,16 +105,35 @@ jobs:
       - name: Build and package Release x86 sideload
         run: >
           msbuild HololensIKEA.csproj
-          /t:Publish
           /p:Configuration=Release
           /p:Platform=x86
           /p:AppxBundle=Never
           /p:UapAppxPackageBuildMode=SideloadOnly
+          /p:GenerateAppxPackageOnBuild=true
           /p:AppxPackageDir=AppPackages\
           /p:AppxPackageSigningEnabled=true
           /p:PackageCertificateKeyFile=${{ github.workspace }}\HololensIKEA_TemporaryKey.pfx
           /p:PackageCertificatePassword=ci
           /p:PackageCertificateThumbprint=""
+
+      - name: Locate sideload .appx
+        id: locate_appx
+        shell: pwsh
+        run: |
+          $appx = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
+            -Recurse -Filter "*.appx" |
+            Where-Object { $_.Name -notlike "*Bundle*" } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+          if (-not $appx) {
+            throw "No sideload .appx package found in AppPackages/."
+          }
+
+          $packageDir = $appx.Directory.FullName
+          "appx_path=$($appx.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "appx_name=$($appx.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "package_dir=$packageDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       # Remove the cert from the workspace before the artifact is captured
       - name: Remove signing certificate
@@ -127,10 +146,11 @@ jobs:
         with:
           name: HololensIKEA-${{ github.sha }}-Release-x86
           path: |
-            AppPackages/**/*.appx
-            AppPackages/**/Dependencies/**
-            AppPackages/**/Install.ps1
-            AppPackages/**/Add-AppDevPackage.ps1
+            ${{ steps.locate_appx.outputs.appx_path }}
+            ${{ steps.locate_appx.outputs.package_dir }}/Dependencies/**
+            ${{ steps.locate_appx.outputs.package_dir }}/Install.ps1
+            ${{ steps.locate_appx.outputs.package_dir }}/Add-AppDevPackage.ps1
+            ${{ steps.locate_appx.outputs.package_dir }}/*.cer
           if-no-files-found: error
 
       # Commit version bump (only after a successful submit)
@@ -155,29 +175,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v$env:NEXT_VERSION"
-          $pkg = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
-            -Recurse -Filter "*.appx" |
-            Where-Object { $_.Name -notlike "*Bundle*" } |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-          if (-not $pkg) {
-            Write-Error "No .appx package found in AppPackages/."
-          }
-
-          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/$($pkg.Name)"
+          $pkgPath = "${{ steps.locate_appx.outputs.appx_path }}"
+          $pkgName = "${{ steps.locate_appx.outputs.appx_name }}"
+          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/$pkgName"
           $notes = @(
             "Sideload package release for HoloLens.",
             "",
-            "Direct .appx download: [$($pkg.Name)]($downloadUrl)",
+            "Direct .appx download: [$pkgName]($downloadUrl)",
             "",
             "Package version: $env:NEXT_VERSION"
           ) -join "`n"
 
-          Write-Host "Creating release $tag with package: $($pkg.Name)"
+          Write-Host "Creating release $tag with package: $pkgName"
           $bumpSha = git rev-parse HEAD
           gh release create $tag `
             --title "HololensIKEA $tag" `
             --notes $notes `
             --target $bumpSha `
-            "$($pkg.FullName)"
+            "$pkgPath"
           Write-Host "Release $tag created: https://github.com/turbolego/HololensIKEA/releases/tag/$tag"
