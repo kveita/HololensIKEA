@@ -276,15 +276,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v$env:NEXT_VERSION"
-          $pkg = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
-            -Recurse -Filter "*.appx" |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
+          $pkg = Get-ChildItem -Path "${{ github.workspace }}\\AppPackages" `
+                      -Recurse -Filter "*.msix" `
+                      | Sort-Object LastWriteTime -Descending `
+                      | Select-Object -First 1
           if (-not $pkg) {
-            Write-Error "No .appx package found in AppPackages/."
+            Write-Error "No .msix package found in AppPackages/."
           }
-          if (-not $pkg.Name.EndsWith('.appx')) {
-            Write-Error "Expected .appx package for release description link, got '$($pkg.Name)'."
+          if (-not $pkg.Name.EndsWith('.msix')) {
+            Write-Error "Expected .msix package for release description link, got '$($pkg.Name)'."
           }
 
           $title = "HololensIKEA $tag"
@@ -292,7 +292,7 @@ jobs:
           $notes = @(
             "Sideload package release for HoloLens.",
             "",
-            "Direct .appx download: [$($pkg.Name)]($downloadUrl)",
+            "Direct .msix download: [$($pkg.Name)]($downloadUrl)",
             "",
             "Microsoft Store submission continues to use the .appxupload package."
           ) -join "`n"
