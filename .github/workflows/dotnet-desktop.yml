@@ -122,7 +122,11 @@ jobs:
         run: |
           $appx = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
             -Recurse -Filter "*.appx" |
-            Where-Object { $_.Name -notlike "*Bundle*" } |
+            Where-Object {
+              $_.Name -like "HololensIKEA_*.appx" -and
+              $_.Name -notlike "*Bundle*" -and
+              $_.FullName -notmatch "\\Dependencies\\"
+            } |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
 
