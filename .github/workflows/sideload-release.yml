@@ -192,7 +192,17 @@ jobs:
           # Include dependency packages if the build emitted them.
           $depDir = Join-Path $packageDir "Dependencies"
           if (Test-Path $depDir) {
-            $items += (Get-ChildItem -Path $depDir -Recurse -File | ForEach-Object { $_.FullName })
+            $unsupportedVclibs = @(
+              "Microsoft.VCLibs.x64.14.00.appx",
+              "Microsoft.VCLibs.ARM64.14.00.appx",
+              "Microsoft.VCLibs.ARM.14.00.appx"
+            )
+            $items += (Get-ChildItem -Path $depDir -Recurse -File |
+              Where-Object {
+                $_.Extension -eq ".appx" -and
+                $_.Name -notin $unsupportedVclibs
+              } |
+              ForEach-Object { $_.FullName })
           }
 
           # Include generated install scripts when available.
@@ -255,7 +265,14 @@ jobs:
           $bundleZip = "${{ steps.collect_assets.outputs.sideload_zip }}"
           $cerPath = "${{ github.workspace }}\HololensIKEA_TemporaryKey.cer"
           $appxFiles = @(Get-ChildItem -Path $packageDir -Recurse -Filter "*.appx" |
-            Where-Object { $_.FullName -notmatch "\\TelemetryDependencies\\" } |
+            Where-Object {
+              $_.FullName -notmatch "\\TelemetryDependencies\\" -and
+              $_.Name -notin @(
+                "Microsoft.VCLibs.x64.14.00.appx",
+                "Microsoft.VCLibs.ARM64.14.00.appx",
+                "Microsoft.VCLibs.ARM.14.00.appx"
+              )
+            } |
             Group-Object Name |
             ForEach-Object {
               $x86 = $_.Group | Where-Object { $_.FullName -match "\\x86\\" } | Select-Object -First 1
