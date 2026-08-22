@@ -107,23 +107,38 @@ jobs:
             -FilePath "${{ github.workspace }}\HololensIKEA_TemporaryKey.pfx" `
             -Password $pwd
 
-      # ── Auto-increment package version (submit runs only) ───────────
+      # ── Select next available package version (submit runs only) ─────
       # Microsoft Store requires the 4th segment (revision) to be 0.
-      # The bump is applied to the working tree BEFORE the build so the
-      # package carries the new version; it is committed back to the repo
-      # after a successful Store submission (see 'Commit version bump').
-      - name: Auto-increment package version
+      # The selected version is applied before the build and committed only
+      # after successful Store submission.
+      - name: Select next available package version
         if: github.event.inputs.action == 'submit'
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $manifestPath = "${{ github.workspace }}\Package.appxmanifest"
           $manifest = [xml](Get-Content $manifestPath)
           $current = [Version]$manifest.Package.Identity.Version
-          $next = "{0}.{1}.{2}.0" -f $current.Major, $current.Minor, ($current.Build + 1)
+          $candidateBuild = $current.Build + 1
+          $usedTags = @{}
+          $remoteTags = git ls-remote --tags origin "refs/tags/v*" |
+            ForEach-Object { ($_ -split "`t")[-1] -replace '^refs/tags/', '' -replace '\^\{\}$', '' }
+          foreach ($existingTag in $remoteTags) {
+            if ($existingTag -match '^v\d+\.\d+\.\d+\.0$') { $usedTags[$existingTag] = $true }
+          }
+          $releaseTags = gh api --paginate "repos/${{ github.repository }}/releases?per_page=100" --jq '.[].tag_name' 2>$null
+          foreach ($existingTag in $releaseTags) {
+            if ($existingTag -match '^v\d+\.\d+\.\d+\.0$') { $usedTags[$existingTag] = $true }
+          }
+          do {
+            $next = "{0}.{1}.{2}.0" -f $current.Major, $current.Minor, $candidateBuild
+            $candidateBuild++
+          } while ($usedTags.ContainsKey("v$next"))
           $manifest.Package.Identity.Version = $next
           $manifest.Save($manifestPath)
           "NEXT_VERSION=$next" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "Bumped package version: $($current.ToString()) -> $next"
+          Write-Host "Selected next available package version: $($current.ToString()) -> $next"
 
       - name: Validate manifest version for Store
         shell: pwsh
