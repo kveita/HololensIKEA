@@ -256,7 +256,12 @@ jobs:
           $cerPath = "${{ github.workspace }}\HololensIKEA_TemporaryKey.cer"
           $appxFiles = @(Get-ChildItem -Path $packageDir -Recurse -Filter "*.appx" |
             Where-Object { $_.FullName -notmatch "\\TelemetryDependencies\\" } |
-            Sort-Object Name -Unique)
+            Group-Object Name |
+            ForEach-Object {
+              $x86 = $_.Group | Where-Object { $_.FullName -match "\\x86\\" } | Select-Object -First 1
+              if ($x86) { $x86 } else { $_.Group | Select-Object -First 1 }
+            } |
+            Sort-Object Name)
           if ($appxFiles.Count -eq 0) {
             throw "No AppX files found for direct release links."
           }
