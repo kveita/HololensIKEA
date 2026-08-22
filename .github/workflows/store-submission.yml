@@ -278,10 +278,15 @@ jobs:
           $tag = "v$env:NEXT_VERSION"
           $pkg = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
             -Recurse -Filter "*.appx" |
+            Where-Object {
+              $_.Name -like "HololensIKEA_*.appx" -and
+              $_.Name -notlike "*Bundle*" -and
+              $_.FullName -notmatch "\\Dependencies\\"
+            } |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
           if (-not $pkg) {
-            Write-Error "No .appx package found in AppPackages/."
+            Write-Error "No standalone HololensIKEA .appx package found in AppPackages/."
           }
 
           $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/$($pkg.Name)"

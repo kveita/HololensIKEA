@@ -9,7 +9,7 @@ name: UWP Package
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "main" ]
 
 jobs:
   package:
