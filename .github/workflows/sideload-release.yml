@@ -26,17 +26,32 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $requestedTag = "${{ github.ref_name }}"
+          $explicitTag = $false
           if ("${{ github.event_name }}" -eq "workflow_dispatch" -and
               -not [string]::IsNullOrWhiteSpace("${{ github.event.inputs.tag }}")) {
             $requestedTag = "${{ github.event.inputs.tag }}"
+            $explicitTag = $true
+          } elseif ("${{ github.event_name }}" -eq "push") {
+            $explicitTag = $true
           }
 
-          if ($requestedTag -notmatch '^v\d+\.\d+\.\d+\.0$') {
-            throw "Release tag '$requestedTag' is invalid. Expected format: vMajor.Minor.Build.0."
+          if ($explicitTag) {
+            if ($requestedTag -notmatch '^v\d+\.\d+\.\d+\.0$') {
+              throw "Release tag '$requestedTag' is invalid. Expected format: vMajor.Minor.Build.0."
+            }
+            $requested = [Version]$requestedTag.Substring(1)
+            $candidateBuild = $requested.Build
+          } else {
+            # A manual run without a tag uses the manifest as its base and
+            # starts at the next Build component, so ref_name=main is valid.
+            $manifest = [xml](Get-Content "${{ github.workspace }}\Package.appxmanifest")
+            $requested = [Version]$manifest.Package.Identity.Version
+            if ($requested.Revision -ne 0) {
+              throw "Manifest version '$requested' is invalid. The revision must be 0."
+            }
+            $candidateBuild = $requested.Build + 1
+            Write-Host "No tag supplied; using manifest version $requested as the base."
           }
-
-          $requested = [Version]$requestedTag.Substring(1)
-          $candidateBuild = $requested.Build
           $usedTags = @{}
           $remoteTags = git ls-remote --tags origin "refs/tags/v*" |
             ForEach-Object { ($_ -split "`t")[-1] -replace '^refs/tags/', '' -replace '\^\{\}$', '' }
