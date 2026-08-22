@@ -73,7 +73,7 @@ jobs:
         uses: microsoft/setup-msbuild@v3
 
       - name: NuGet restore
-        run: nuget restore HololensIKEA.csproj
+        run: nuget restore HololensIKEA.sln
 
       # ── Install UWP build tools ──────────────────────────────────────
       - name: Install Windows 10 SDK 19041 and UWP MSBuild tools
@@ -107,23 +107,38 @@ jobs:
             -FilePath "${{ github.workspace }}\HololensIKEA_TemporaryKey.pfx" `
             -Password $pwd
 
-      # ── Auto-increment package version (submit runs only) ───────────
+      # ── Select next available package version (submit runs only) ─────
       # Microsoft Store requires the 4th segment (revision) to be 0.
-      # The bump is applied to the working tree BEFORE the build so the
-      # package carries the new version; it is committed back to the repo
-      # after a successful Store submission (see 'Commit version bump').
-      - name: Auto-increment package version
+      # The selected version is applied before the build and committed only
+      # after successful Store submission.
+      - name: Select next available package version
         if: github.event.inputs.action == 'submit'
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $manifestPath = "${{ github.workspace }}\Package.appxmanifest"
           $manifest = [xml](Get-Content $manifestPath)
           $current = [Version]$manifest.Package.Identity.Version
-          $next = "{0}.{1}.{2}.0" -f $current.Major, $current.Minor, ($current.Build + 1)
+          $candidateBuild = $current.Build + 1
+          $usedTags = @{}
+          $remoteTags = git ls-remote --tags origin "refs/tags/v*" |
+            ForEach-Object { ($_ -split "`t")[-1] -replace '^refs/tags/', '' -replace '\^\{\}$', '' }
+          foreach ($existingTag in $remoteTags) {
+            if ($existingTag -match '^v\d+\.\d+\.\d+\.0$') { $usedTags[$existingTag] = $true }
+          }
+          $releaseTags = gh api --paginate "repos/${{ github.repository }}/releases?per_page=100" --jq '.[].tag_name' 2>$null
+          foreach ($existingTag in $releaseTags) {
+            if ($existingTag -match '^v\d+\.\d+\.\d+\.0$') { $usedTags[$existingTag] = $true }
+          }
+          do {
+            $next = "{0}.{1}.{2}.0" -f $current.Major, $current.Minor, $candidateBuild
+            $candidateBuild++
+          } while ($usedTags.ContainsKey("v$next"))
           $manifest.Package.Identity.Version = $next
           $manifest.Save($manifestPath)
           "NEXT_VERSION=$next" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "Bumped package version: $($current.ToString()) -> $next"
+          Write-Host "Selected next available package version: $($current.ToString()) -> $next"
 
       - name: Validate manifest version for Store
         shell: pwsh
@@ -276,40 +291,33 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v$env:NEXT_VERSION"
-          $pkg = Get-ChildItem -Path "${{ github.workspace }}\\AppPackages" `
-                      -Recurse -Filter "*.msix" `
-                      | Sort-Object LastWriteTime -Descending `
-                      | Select-Object -First 1
+          $pkg = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
+            -Recurse -Filter "*.appx" |
+            Where-Object {
+              $_.Name -like "HololensIKEA_*.appx" -and
+              $_.Name -notlike "*Bundle*" -and
+              $_.FullName -notmatch "\\Dependencies\\"
+            } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
           if (-not $pkg) {
-            Write-Error "No .msix package found in AppPackages/."
-          }
-          if (-not $pkg.Name.EndsWith('.msix')) {
-            Write-Error "Expected .msix package for release description link, got '$($pkg.Name)'."
+            Write-Error "No standalone HololensIKEA .appx package found in AppPackages/."
           }
 
-          $title = "HololensIKEA $tag"
           $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/$($pkg.Name)"
           $notes = @(
             "Sideload package release for HoloLens.",
             "",
-            "Direct .msix download: [$($pkg.Name)]($downloadUrl)",
+            "Direct .appx download: [$($pkg.Name)]($downloadUrl)",
             "",
             "Microsoft Store submission continues to use the .appxupload package."
           ) -join "`n"
 
-          gh release view $tag > $null 2>&1
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag already exists. Updating asset and description."
-            gh release upload $tag "$($pkg.FullName)" --clobber
-            gh release edit $tag --title $title --notes $notes
-          } else {
-            Write-Host "Creating release $tag with package: $($pkg.Name)"
-            $bumpSha = git rev-parse HEAD
-            gh release create $tag `
-              --title $title `
-              --notes $notes `
-              --target $bumpSha `
-              "$($pkg.FullName)"
-          }
-
-          Write-Host "Release ready: https://github.com/turbolego/HololensIKEA/releases/tag/$tag"
+          Write-Host "Creating release $tag with package: $($pkg.Name)"
+          $bumpSha = git rev-parse HEAD
+          gh release create $tag `
+            --title "HololensIKEA $tag" `
+            --notes $notes `
+            --target $bumpSha `
+            "$($pkg.FullName)"
+          Write-Host "Release $tag created: https://github.com/turbolego/HololensIKEA/releases/tag/$tag"

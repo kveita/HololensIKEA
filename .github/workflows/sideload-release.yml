@@ -2,8 +2,7 @@ name: Sideload Release
 on:
   push:
     tags:
-      - "v*.*.*"
-      - "v*.*.*.*"
+      - "v*.*.*.0"
   workflow_dispatch:
     inputs:
       tag:
@@ -21,34 +20,75 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Resolve release tag
+      - name: Resolve next available release version
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "${{ github.ref_name }}"
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            if (-not [string]::IsNullOrWhiteSpace("${{ github.event.inputs.tag }}")) {
-              $tag = "${{ github.event.inputs.tag }}"
-            }
+          $requestedTag = "${{ github.ref_name }}"
+          $explicitTag = $false
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and
+              -not [string]::IsNullOrWhiteSpace("${{ github.event.inputs.tag }}")) {
+            $requestedTag = "${{ github.event.inputs.tag }}"
+            $explicitTag = $true
+          } elseif ("${{ github.event_name }}" -eq "push") {
+            $explicitTag = $true
           }
 
-          if ($tag -notmatch '^v\d+\.\d+\.\d+(\.\d+)?$') {
-            throw "Release tag '$tag' is invalid. Expected format: vMajor.Minor.Build(.Revision)."
+          if ($explicitTag) {
+            if ($requestedTag -notmatch '^v\d+\.\d+\.\d+\.0$') {
+              throw "Release tag '$requestedTag' is invalid. Expected format: vMajor.Minor.Build.0."
+            }
+            $requested = [Version]$requestedTag.Substring(1)
+            $candidateBuild = $requested.Build
+          } else {
+            # A manual run without a tag uses the manifest as its base and
+            # starts at the next Build component, so ref_name=main is valid.
+            $manifest = [xml](Get-Content "${{ github.workspace }}\Package.appxmanifest")
+            $requested = [Version]$manifest.Package.Identity.Version
+            if ($requested.Revision -ne 0) {
+              throw "Manifest version '$requested' is invalid. The revision must be 0."
+            }
+            $candidateBuild = $requested.Build + 1
+            Write-Host "No tag supplied; using manifest version $requested as the base."
           }
+          $usedTags = @{}
+          $remoteTags = git ls-remote --tags origin "refs/tags/v*" |
+            ForEach-Object { ($_ -split "`t")[-1] -replace '^refs/tags/', '' -replace '\^\{\}$', '' }
+          foreach ($existingTag in $remoteTags) {
+            if ($existingTag -match '^v\d+\.\d+\.\d+\.0$') { $usedTags[$existingTag] = $true }
+          }
+          $releaseTags = gh api --paginate "repos/${{ github.repository }}/releases?per_page=100" --jq '.[].tag_name' 2>$null
+          foreach ($existingTag in $releaseTags) {
+            if ($existingTag -match '^v\d+\.\d+\.\d+\.0$') { $usedTags[$existingTag] = $true }
+          }
+
+          do {
+            $tag = "v{0}.{1}.{2}.0" -f $requested.Major, $requested.Minor, $candidateBuild
+            $candidateBuild++
+          } while ($usedTags.ContainsKey($tag))
 
           $version = $tag.Substring(1)
           "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
           "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "Resolved release tag: $tag"
+          Write-Host "Selected next available release tag: $tag"
 
-      - name: Validate manifest version matches tag
+      - name: Set and validate manifest version
         shell: pwsh
         run: |
-          $manifest = [xml](Get-Content "${{ github.workspace }}\Package.appxmanifest")
-          $manifestVersion = $manifest.Package.Identity.Version
-          if ($manifestVersion -ne "$env:RELEASE_VERSION") {
-            throw "Package.appxmanifest version '$manifestVersion' does not match release tag version '$env:RELEASE_VERSION'."
+          $manifestPath = "${{ github.workspace }}\Package.appxmanifest"
+          $manifest = [xml](Get-Content $manifestPath)
+          $version = [Version]$env:RELEASE_VERSION
+          if ($version.Revision -ne 0) {
+            throw "Selected version '$version' is invalid. The revision must be 0."
           }
-          Write-Host "Manifest version matches release tag: $manifestVersion"
+          $manifest.Package.Identity.Version = $env:RELEASE_VERSION
+          $manifest.Save($manifestPath)
+          $saved = [xml](Get-Content $manifestPath)
+          if ($saved.Package.Identity.Version -ne $env:RELEASE_VERSION) {
+            throw "Package.appxmanifest version was not updated to '$env:RELEASE_VERSION'."
+          }
+          Write-Host "Using Store-compatible manifest version: $env:RELEASE_VERSION"
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v3
@@ -109,9 +149,9 @@ jobs:
         shell: pwsh
         run: |
           $appx = Get-ChildItem -Path "${{ github.workspace }}\\AppPackages" `
-                      -Recurse -Filter "*.msix" `
+                      -Recurse -Filter "*.appx" `
                       | Where-Object {
-                        $_.Name -like "HololensIKEA_*.msix" -and
+                        $_.Name -like "HololensIKEA_*.appx" -and
                         $_.Name -notlike "*Bundle*" -and
                         $_.FullName -notmatch "\\Dependencies\\"
                       } `
@@ -119,7 +159,7 @@ jobs:
                       | Select-Object -First 1
 
           if (-not $appx) {
-            throw "No sideload .msix package found in AppPackages/."
+            throw "No sideload .appx package found in AppPackages/."
           }
 
           $packageDir = $appx.DirectoryName
@@ -198,7 +238,7 @@ jobs:
           $notes = @(
             "Sideload package release for HoloLens.",
             "",
-            "Direct .msix download: [$appxName]($downloadUrl)",
+            "Direct .appx download: [$appxName]($downloadUrl)",
             "",
             "Includes a sideload bundle zip with dependencies and install scripts.",
             "Package version: $env:RELEASE_VERSION"
@@ -222,5 +262,9 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Remove-Item -Path "$env:PFX_PATH" -ErrorAction SilentlyContinue
-          Remove-Item -Path "$env:CER_PATH" -ErrorAction SilentlyContinue
+          if (-not [string]::IsNullOrWhiteSpace($env:PFX_PATH)) {
+            Remove-Item -Path $env:PFX_PATH -Force -ErrorAction SilentlyContinue
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:CER_PATH)) {
+            Remove-Item -Path $env:CER_PATH -Force -ErrorAction SilentlyContinue
+          }
