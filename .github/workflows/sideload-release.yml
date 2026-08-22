@@ -230,6 +230,7 @@ jobs:
 
           "appx_path=$($appx.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "appx_name=$($appx.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "package_dir=$packageDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           $sp = $zipPath.Replace('\', '/')
           "sideload_zip=$sp" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
@@ -250,33 +251,43 @@ jobs:
         run: |
           $tag = "$env:RELEASE_TAG"
           $title = "HololensIKEA $tag"
-          $appxPath = "${{ steps.collect_assets.outputs.appx_path }}"
-          $appxName = "${{ steps.collect_assets.outputs.appx_name }}"
+          $packageDir = "${{ steps.collect_assets.outputs.package_dir }}"
           $bundleZip = "${{ steps.collect_assets.outputs.sideload_zip }}"
           $cerPath = "${{ github.workspace }}\HololensIKEA_TemporaryKey.cer"
-          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/$appxName"
+          $appxFiles = @(Get-ChildItem -Path $packageDir -Recurse -Filter "*.appx" |
+            Where-Object { $_.FullName -notmatch "\\TelemetryDependencies\\" } |
+            Sort-Object Name -Unique)
+          if ($appxFiles.Count -eq 0) {
+            throw "No AppX files found for direct release links."
+          }
 
-          $notes = @(
+          $releaseAssets = @($appxFiles | ForEach-Object { $_.FullName }) + $bundleZip + $cerPath
+          $noteLines = @(
             "Sideload package release for HoloLens.",
             "",
-            "Direct .appx download: [$appxName]($downloadUrl)",
-            "",
-            "Includes a sideload bundle zip with dependencies and install scripts.",
-            "Package version: $env:RELEASE_VERSION"
-          ) -join "`n"
+            "Direct .appx downloads (HoloLens Edge cannot browse workflow artifacts):"
+          )
+          foreach ($file in $appxFiles) {
+            $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/$($file.Name)"
+            $noteLines += "- [$($file.Name)]($downloadUrl)"
+          }
+          $noteLines += ""
+          $noteLines += "Includes a sideload bundle zip with dependencies and install scripts."
+          $noteLines += "Package version: $env:RELEASE_VERSION"
+          $notes = $noteLines -join "`n"
 
           gh release view $tag > $null 2>&1
           if ($LASTEXITCODE -eq 0) {
             Write-Host "Release $tag already exists. Updating assets and notes."
-            gh release upload $tag "$appxPath" "$bundleZip" "$cerPath" --clobber
+            gh release upload $tag @releaseAssets --clobber
             gh release edit $tag --title $title --notes $notes
           } else {
-            Write-Host "Creating release $tag"
+            Write-Host "Creating release $tag with $($appxFiles.Count) direct AppX assets"
             gh release create $tag `
               --title $title `
               --notes $notes `
               --target "${{ github.sha }}" `
-              "$appxPath" "$bundleZip" "$cerPath"
+              @releaseAssets
           }
 
       - name: Remove signing certificate files
