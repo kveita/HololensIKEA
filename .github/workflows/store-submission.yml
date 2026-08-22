@@ -168,6 +168,35 @@ jobs:
           /p:PackageCertificatePassword=ci
           /p:PackageCertificateThumbprint=""
 
+      - name: Normalize package extensions
+        shell: pwsh
+        run: |
+          # Current Windows SDKs emit MSIX extensions for this UWP project.
+          # AppX and MSIX use the same package container; create the AppX
+          # aliases required by WACK and the GitHub release contract.
+          $msixUpload = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
+            -Recurse -Filter "HololensIKEA_*.msixupload" |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if ($msixUpload) {
+            $appxUploadPath = [System.IO.Path]::ChangeExtension($msixUpload.FullName, ".appxupload")
+            Copy-Item -Path $msixUpload.FullName -Destination $appxUploadPath -Force
+            Write-Host "Normalized Store package: $($msixUpload.Name) -> $([System.IO.Path]::GetFileName($appxUploadPath))"
+          }
+          $msix = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
+            -Recurse -Filter "HololensIKEA_*.msix" |
+            Where-Object {
+              $_.Name -notlike "*Bundle*" -and
+              $_.FullName -notmatch "\\Dependencies\\"
+            } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if ($msix) {
+            $appxPath = [System.IO.Path]::ChangeExtension($msix.FullName, ".appx")
+            Copy-Item -Path $msix.FullName -Destination $appxPath -Force
+            Write-Host "Normalized release package: $($msix.Name) -> $([System.IO.Path]::GetFileName($appxPath))"
+          }
+
       - name: Remove build certificate
         if: always()
         run: Remove-Item -Path "${{ github.workspace }}\HololensIKEA_TemporaryKey.pfx" -ErrorAction SilentlyContinue

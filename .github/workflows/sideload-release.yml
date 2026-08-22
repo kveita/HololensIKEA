@@ -144,6 +144,27 @@ jobs:
           /p:PackageCertificatePassword=ci
           /p:PackageCertificateThumbprint=""
 
+      - name: Normalize package extensions
+        shell: pwsh
+        run: |
+          # Current Windows SDKs emit MSIX extensions even for this UWP
+          # package. AppX and MSIX use the same package container; expose the
+          # sideload payload with the .appx extension used by the release.
+          $msix = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
+            -Recurse -Filter "HololensIKEA_*.msix" |
+            Where-Object {
+              $_.Name -notlike "*Bundle*" -and
+              $_.FullName -notmatch "\\Dependencies\\"
+            } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $msix) {
+            throw "No standalone MSIX package was emitted by the build."
+          }
+          $appxPath = [System.IO.Path]::ChangeExtension($msix.FullName, ".appx")
+          Copy-Item -Path $msix.FullName -Destination $appxPath -Force
+          Write-Host "Normalized release package: $($msix.Name) -> $([System.IO.Path]::GetFileName($appxPath))"
+
       - name: Collect release assets
         id: collect_assets
         shell: pwsh
