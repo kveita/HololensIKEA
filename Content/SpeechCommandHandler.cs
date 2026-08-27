@@ -39,6 +39,12 @@ namespace HololensIKEA.Content
         /// <summary>Fires when "close" or "lukk" is spoken (to dismiss dialogs).</summary>
         public event Action OnDismissDialog;
 
+        /// <summary>Fires when "bookmarks" or "bøker" is spoken.</summary>
+        public event Action OnShowBookmarks;
+
+        /// <summary>Fires when a search query should be applied to bookmarks.</summary>
+        public event Action<string> OnSearchBookmarks;
+
         /// <summary>Fires when recognized text should be typed into the keyboard.</summary>
         public event Action<string> OnTextForKeyboard;
 
@@ -193,6 +199,26 @@ namespace HololensIKEA.Content
             {
                 OnDismissDialog?.Invoke();
                 OnStatusChanged?.Invoke("Dismissed");
+                return;
+            }
+
+            // ── Bookmarks commands (always active) ───────────────────────────
+            if (textLower.Contains("bookmark") || textLower.Contains("bookmarks") ||
+                textLower == "bøker" || textLower == "bokmerke")
+            {
+                // Check if followed by search terms
+                if (textLower.Length > 15)
+                {
+                    string query = StripCommandPrefixes(textLower);
+                    if (!string.IsNullOrWhiteSpace(query) && query.Length >= 2)
+                    {
+                        OnSearchBookmarks?.Invoke(query);
+                        OnStatusChanged?.Invoke("Searching bookmarks: " + query);
+                        return;
+                    }
+                }
+                OnShowBookmarks?.Invoke();
+                OnStatusChanged?.Invoke("Show bookmarks");
                 return;
             }
 

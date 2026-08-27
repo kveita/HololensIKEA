@@ -115,6 +115,11 @@ namespace HololensIKEA
         private ProductSearchService           _productSearchService;
         private SearchResultsDialog            _searchResultsDialog;
 
+        // --- Bookmarks support ---
+        private BookmarksService               _bookmarksService;
+        private BookmarksDialog                _bookmarksDialog;
+        private bool                           _bookmarksLoading = false;
+
         // --- IKEA GLB model support ---
         private ModelService3D                  _modelService3D = new ModelService3D();
         private GltfMeshRenderer               _gltfMeshRenderer;
@@ -251,6 +256,17 @@ namespace HololensIKEA
             _speechHandler.OnDismissDialog += () => {
                 Debug.WriteLine("[Voice] Dismiss dialog");
                 if (_searchResultsDialog != null) _searchResultsDialog.Hide();
+                if (_bookmarksDialog != null) _bookmarksDialog.Hide();
+            };
+            // Voice input: show bookmarks
+            _speechHandler.OnShowBookmarks += () => {
+                Debug.WriteLine("[Voice] Show bookmarks");
+                ShowBookmarksDialog();
+            };
+            // Voice input: search bookmarks by name
+            _speechHandler.OnSearchBookmarks += (query) => {
+                Debug.WriteLine("[Voice] Search bookmarks: " + query);
+                ShowBookmarksSearch(query);
             };
             // Voice input: digits spoken while gazing at keyboard → type them
             _speechHandler.OnTextForKeyboard += (text) => {
@@ -276,6 +292,17 @@ namespace HololensIKEA
                 inputBuffer = produktnr;
                 StartProductLoad();
             };
+
+            // Bookmarks service and dialog
+            _bookmarksService = new BookmarksService();
+            _bookmarksDialog = new BookmarksDialog(deviceResources);
+            _bookmarksDialog.CreateDeviceDependentResources();
+            _bookmarksDialog.OnBookmarkSelected += (bookmark) => {
+                Debug.WriteLine("[Bookmarks] Selected: " + bookmark.Name);
+                inputBuffer = bookmark.Url;
+                StartProductLoad();
+            };
+            LoadBookmarksAsync();
 
             spatialInputHandler  = new SpatialInputHandler();
             productRepository    = new IkeaProductRepository();
@@ -367,6 +394,11 @@ namespace HololensIKEA
             {
                 _searchResultsDialog.Dispose();
                 _searchResultsDialog = null;
+            }
+            if (_bookmarksDialog != null)
+            {
+                _bookmarksDialog.Dispose();
+                _bookmarksDialog = null;
             }
             _productSearchService = null;
             // Dispose all product instances
@@ -472,6 +504,16 @@ namespace HololensIKEA
                     _searchResultsDialog.UpdateGaze(
                         new Vector3(headPos2.X, headPos2.Y, headPos2.Z),
                         new Vector3(headDir2.X, headDir2.Y, headDir2.Z));
+                }
+
+                // Update bookmarks dialog gaze hit-testing
+                if (_bookmarksDialog != null && _bookmarksDialog.IsVisible && headPose != null)
+                {
+                    var headPos3 = headPose.Head.Position;
+                    var headDir3 = headPose.Head.ForwardDirection;
+                    _bookmarksDialog.UpdateGaze(
+                        new Vector3(headPos3.X, headPos3.Y, headPos3.Z),
+                        new Vector3(headDir3.X, headDir3.Y, headDir3.Z));
                 }
 
                 // Update manipulation handle highlights based on current gaze (runs every frame).
@@ -628,6 +670,11 @@ namespace HololensIKEA
                             Debug.WriteLine("[Input] Air-tap on search dialog");
                             _searchResultsDialog.HandleAirTap();
                         }
+                        else if (_bookmarksDialog != null && _bookmarksDialog.IsVisible)
+                        {
+                            Debug.WriteLine("[Input] Air-tap on bookmarks dialog");
+                            _bookmarksDialog.OnAirTap();
+                        }
                         else if (keyboardInputHandler.IsVisible)
                         {
                             // Tap missed the product box — route to keyboard.
@@ -642,6 +689,11 @@ namespace HololensIKEA
                     {
                         Debug.WriteLine("[Input] Air-tap on search dialog");
                         _searchResultsDialog.HandleAirTap();
+                    }
+                    else if (_bookmarksDialog != null && _bookmarksDialog.IsVisible)
+                    {
+                        Debug.WriteLine("[Input] Air-tap on bookmarks dialog");
+                        _bookmarksDialog.OnAirTap();
                     }
                     else if (keyboardInputHandler.IsVisible && pointerState != null)
                     {
@@ -1199,6 +1251,12 @@ namespace HololensIKEA
                         {
                             _searchResultsDialog.Render();
                         }
+                        // Render bookmarks dialog if visible
+                        if (_bookmarksDialog != null && _bookmarksDialog.IsVisible)
+                        {
+                            _bookmarksDialog.Update();
+                            _bookmarksDialog.Render();
+                        }
 
                         if (canCommitDirect3D11DepthBuffer)
                         {
@@ -1665,7 +1723,6 @@ namespace HololensIKEA
         }
 
         // ── Multi-product support ─────────────────────────────────────────────
-
         /// <summary>
         /// Clears all products from the scene.
         /// </summary>
@@ -1727,6 +1784,70 @@ namespace HololensIKEA
             }
 
             return closest;
+        }
+
+        // ── Bookmarks support ───────────────────────────────────────────────
+
+        /// <summary>
+        /// Loads bookmarks from the embedded bookmarks.json file.
+        /// </summary>
+        private async void LoadBookmarksAsync()
+        {
+            if (_bookmarksLoading) return;
+            _bookmarksLoading = true;
+            
+            try
+            {
+                await _bookmarksService.LoadAsync();
+                Debug.WriteLine($"[Bookmarks] Loaded {_bookmarksService.Count} bookmarks");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Bookmarks] Error loading: {ex.Message}");
+            }
+            finally
+            {
+                _bookmarksLoading = false;
+            }
+        }
+
+        /// <summary>
+        /// Shows the bookmarks dialog with all available bookmarks.
+        /// </summary>
+        private void ShowBookmarksDialog()
+        {
+            if (_bookmarksService == null || _bookmarksService.Count == 0)
+            {
+                Debug.WriteLine("[Bookmarks] No bookmarks available");
+                return;
+            }
+
+            var bookmarks = new List<HololensIKEA.Models.Bookmark>(_bookmarksService.Bookmarks);
+            _bookmarksDialog.Show(bookmarks);
+            Debug.WriteLine($"[Bookmarks] Showing {bookmarks.Count} bookmarks");
+        }
+
+        /// <summary>
+        /// Searches bookmarks and shows the dialog with results.
+        /// </summary>
+        private void ShowBookmarksSearch(string query)
+        {
+            if (_bookmarksService == null)
+            {
+                Debug.WriteLine("[Bookmarks] Service not loaded yet");
+                return;
+            }
+
+            var results = _bookmarksService.Search(query);
+            if (results.Count > 0)
+            {
+                _bookmarksDialog.Show(results);
+                Debug.WriteLine($"[Bookmarks] Showing {results.Count} results for '{query}'");
+            }
+            else
+            {
+                Debug.WriteLine($"[Bookmarks] No results for '{query}'");
+            }
         }
     }
 }
