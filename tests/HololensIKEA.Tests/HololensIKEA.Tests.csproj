@@ -20,6 +20,9 @@
   <ItemGroup>
     <Compile Include="../../Services/ProductViewClassifier.cs" Link="Services/ProductViewClassifier.cs" />
     <Compile Include="../../Models/RenderableProduct.cs" Link="Models/RenderableProduct.cs" />
+    <Compile Include="../../Models/Bookmark.cs" Link="Models/Bookmark.cs" />
+    <Compile Include="../../Services/ProductServices.cs" Link="Services/ProductServices.cs" />
+    <Compile Include="../../Services/ModelService3D.cs" Link="Services/ModelService3D.cs" />
   </ItemGroup>
 
 </Project>
