@@ -296,7 +296,6 @@ namespace HololensIKEA
             // Bookmarks service and dialog
             _bookmarksService = new BookmarksService();
             _bookmarksDialog = new BookmarksDialog(deviceResources);
-            _bookmarksDialog.CreateDeviceDependentResources();
             _bookmarksDialog.OnBookmarkSelected += (bookmark) => {
                 Debug.WriteLine("[Bookmarks] Selected: " + bookmark.Name);
                 inputBuffer = bookmark.Url;
@@ -673,7 +672,7 @@ namespace HololensIKEA
                         else if (_bookmarksDialog != null && _bookmarksDialog.IsVisible)
                         {
                             Debug.WriteLine("[Input] Air-tap on bookmarks dialog");
-                            _bookmarksDialog.OnAirTap();
+                            _bookmarksDialog.HandleAirTap();
                         }
                         else if (keyboardInputHandler.IsVisible)
                         {

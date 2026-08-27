@@ -442,49 +442,64 @@ namespace HololensIKEA.Content
                     MipLevels = 1,
                     ArraySize = 1,
                     Format = Format.B8G8R8A8_UNorm,
-                    Usage = ResourceUsage.Dynamic,
-                    BindFlags = BindFlags.ShaderResource,
-                    CpuAccessFlags = CpuAccessFlags.Write,
                     SampleDescription = new SampleDescription(1, 0),
+                    Usage = ResourceUsage.Default,
+                    BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
+                    CpuAccessFlags = CpuAccessFlags.None,
                 };
                 _texture = this.ToDispose(new Texture2D(device, texDesc));
                 _srv = this.ToDispose(new ShaderResourceView(device, _texture));
 
-                _d2dTarget = this.ToDispose(new SharpDX.Direct2D1.RenderTarget(
-                    _dr.D2DFactory,
-                    new SharpDX.Direct2D1.PixelFormat(Format.B8G8R8A8_UNorm, SharpDX.Direct2D1.AlphaMode.Premultiplied),
-                    new SharpDX.Direct2D1.RenderTargetProperties(
+                using (var surf = _texture.QueryInterface<SharpDX.DXGI.Surface>())
+                {
+                    var rtProps = new SharpDX.Direct2D1.RenderTargetProperties(
                         SharpDX.Direct2D1.RenderTargetType.Default,
-                        new SharpDX.Direct2D1.DisplayProperties(),
-                        SharpDX.Direct2D1.RenderTargetPriority.Normal,
-                        0,
-                        SharpDX.Direct2D1.RenderTargetOptions.None),
-                    _texture));
+                        new SharpDX.Direct2D1.PixelFormat(Format.Unknown, SharpDX.Direct2D1.AlphaMode.Premultiplied),
+                        96f, 96f,
+                        SharpDX.Direct2D1.RenderTargetUsage.None,
+                        SharpDX.Direct2D1.FeatureLevel.Level_DEFAULT);
+                    _d2dTarget = this.ToDispose(
+                        new SharpDX.Direct2D1.RenderTarget(_dr.DWriteFactory, surf, rtProps));
+                }
 
                 // Fonts
-                _headerFont = this.ToDispose(new SharpDX.DirectWrite.TextFormat(_dr.DirectWriteFactory, "Segoe UI", 36)
-                {
-                    TextAlignment = TextAlignment.Leading,
-                    ParagraphAlignment = ParagraphAlignment.Center,
-                });
-                _itemFont = this.ToDispose(new SharpDX.DirectWrite.TextFormat(_dr.DirectWriteFactory, "Segoe UI", 26)
-                {
-                    TextAlignment = TextAlignment.Leading,
-                    ParagraphAlignment = ParagraphAlignment.Center,
-                });
-                _subFont = this.ToDispose(new SharpDX.DirectWrite.TextFormat(_dr.DirectWriteFactory, "Segoe UI", 18)
-                {
-                    TextAlignment = TextAlignment.Leading,
-                    ParagraphAlignment = ParagraphAlignment.Center,
-                });
+                _headerFont = this.ToDispose(new SharpDX.DirectWrite.TextFormat(
+                    _dr.DWriteFactory, "Segoe UI",
+                    SharpDX.DirectWrite.FontWeight.Bold,
+                    SharpDX.DirectWrite.FontStyle.Normal,
+                    SharpDX.DirectWrite.FontStretch.Normal, 36f));
+                _headerFont.TextAlignment = SharpDX.DirectWrite.TextAlignment.Leading;
+                _headerFont.ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Center;
+
+                _itemFont = this.ToDispose(new SharpDX.DirectWrite.TextFormat(
+                    _dr.DWriteFactory, "Segoe UI",
+                    SharpDX.DirectWrite.FontWeight.SemiBold,
+                    SharpDX.DirectWrite.FontStyle.Normal,
+                    SharpDX.DirectWrite.FontStretch.Normal, 26f));
+                _itemFont.TextAlignment = SharpDX.DirectWrite.TextAlignment.Leading;
+                _itemFont.ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Center;
+
+                _subFont = this.ToDispose(new SharpDX.DirectWrite.TextFormat(
+                    _dr.DWriteFactory, "Segoe UI",
+                    SharpDX.DirectWrite.FontWeight.Normal,
+                    SharpDX.DirectWrite.FontStyle.Normal,
+                    SharpDX.DirectWrite.FontStretch.Normal, 18f));
+                _subFont.TextAlignment = SharpDX.DirectWrite.TextAlignment.Leading;
+                _subFont.ParagraphAlignment = SharpDX.DirectWrite.ParagraphAlignment.Center;
 
                 // Brushes
-                _brushWhite = this.ToDispose(new SharpDX.Direct2D1.SolidColorBrush(_d2dTarget, SharpDX.Color.White));
-                _brushHighlight = this.ToDispose(new SharpDX.Direct2D1.SolidColorBrush(_d2dTarget, new SharpDX.Color4(0.3f, 0.8f, 1f, 1f)));
-                _brushDim = this.ToDispose(new SharpDX.Direct2D1.SolidColorBrush(_d2dTarget, new SharpDX.Color4(0.6f, 0.6f, 0.7f, 1f)));
-                _brushBg = this.ToDispose(new SharpDX.Direct2D1.SolidColorBrush(_d2dTarget, new SharpDX.Color4(0.05f, 0.05f, 0.15f, 0.92f)));
-                _brushRowBg = this.ToDispose(new SharpDX.Direct2D1.SolidColorBrush(_d2dTarget, new SharpDX.Color4(0.08f, 0.08f, 0.2f, 0.95f)));
-                _brushRowHover = this.ToDispose(new SharpDX.Direct2D1.SolidColorBrush(_d2dTarget, new SharpDX.Color4(0.15f, 0.25f, 0.6f, 0.98f)));
+                _brushWhite = this.ToDispose(new SharpDX.Direct2D1.SolidColorBrush(_d2dTarget,
+                    new SharpDX.Mathematics.Interop.RawColor4(1f, 1f, 1f, 1f)));
+                _brushHighlight = this.ToDispose(new SharpDX.Direct2D1.SolidColorBrush(_d2dTarget,
+                    new SharpDX.Mathematics.Interop.RawColor4(0.3f, 0.8f, 1f, 1f)));
+                _brushDim = this.ToDispose(new SharpDX.Direct2D1.SolidColorBrush(_d2dTarget,
+                    new SharpDX.Mathematics.Interop.RawColor4(0.6f, 0.6f, 0.7f, 1f)));
+                _brushBg = this.ToDispose(new SharpDX.Direct2D1.SolidColorBrush(_d2dTarget,
+                    new SharpDX.Mathematics.Interop.RawColor4(0.05f, 0.05f, 0.15f, 0.92f)));
+                _brushRowBg = this.ToDispose(new SharpDX.Direct2D1.SolidColorBrush(_d2dTarget,
+                    new SharpDX.Mathematics.Interop.RawColor4(0.08f, 0.08f, 0.2f, 0.95f)));
+                _brushRowHover = this.ToDispose(new SharpDX.Direct2D1.SolidColorBrush(_d2dTarget,
+                    new SharpDX.Mathematics.Interop.RawColor4(0.15f, 0.25f, 0.6f, 0.98f)));
 
                 _loadingComplete = true;
                 Debug.WriteLine("[Bookmarks] Resources created");
