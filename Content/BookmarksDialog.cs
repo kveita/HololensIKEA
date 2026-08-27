@@ -459,7 +459,7 @@ namespace HololensIKEA.Content
                         SharpDX.Direct2D1.RenderTargetUsage.None,
                         SharpDX.Direct2D1.FeatureLevel.Level_DEFAULT);
                     _d2dTarget = this.ToDispose(
-                        new SharpDX.Direct2D1.RenderTarget(_dr.DWriteFactory, surf, rtProps));
+                        new SharpDX.Direct2D1.RenderTarget(_dr.D2DFactory, surf, rtProps));
                 }
 
                 // Fonts

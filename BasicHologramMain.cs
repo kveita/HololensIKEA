@@ -692,7 +692,7 @@ namespace HololensIKEA
                     else if (_bookmarksDialog != null && _bookmarksDialog.IsVisible)
                     {
                         Debug.WriteLine("[Input] Air-tap on bookmarks dialog");
-                        _bookmarksDialog.OnAirTap();
+                        _bookmarksDialog.HandleAirTap();
                     }
                     else if (keyboardInputHandler.IsVisible && pointerState != null)
                     {
