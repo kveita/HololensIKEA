@@ -139,10 +139,14 @@ jobs:
               Select-Object -First 1
 
             if ($upload) {
+              Write-Host "Found upload package: $($upload.FullName)"
               $extractDir = Join-Path $upload.DirectoryName "extracted"
               $zipCopy = Join-Path $upload.DirectoryName "$($upload.BaseName).zip"
               Copy-Item -Path $upload.FullName -Destination $zipCopy -Force
               Expand-Archive -Path $zipCopy -DestinationPath $extractDir -Force
+
+              Write-Host "Extracted contents:"
+              Get-ChildItem -Path $extractDir -Recurse | ForEach-Object { Write-Host "  $($_.FullName)" }
 
               $appx = Get-ChildItem -Path $extractDir -Recurse -Filter "*.appx" |
                 Where-Object { $_.Name -notlike "*Bundle*" } |
@@ -151,6 +155,8 @@ jobs:
           }
 
           if (-not $appx) {
+            Write-Host "AppPackages contents:"
+            Get-ChildItem -Path $appxRoot -Recurse | ForEach-Object { Write-Host "  $($_.FullName)" }
             throw "No sideload .appx package found in AppPackages/."
           }
 
