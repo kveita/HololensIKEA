@@ -166,20 +166,23 @@ jobs:
           $vclibsAppx = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs\14.0\AppX\Retail\x86" `
             -Filter "*.appx" -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($vclibsAppx) {
-            "vclibs_path=$($vclibsAppx.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Copy-Item -Path $vclibsAppx.FullName -Destination (Join-Path $packageDir "Microsoft.VCLibs.x86.14.00.appx") -Force
+            "vclibs_path=$packageDir\Microsoft.VCLibs.x86.14.00.appx" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
 
           $netNativeRuntimeAppx = Get-ChildItem -Path (Join-Path $nugetRoot "runtime.win10-x86.microsoft.net.native.compiler") `
             -Recurse -Filter "Microsoft.NET.Native.Runtime.*.appx" -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($netNativeRuntimeAppx) {
-            "netnative_runtime_path=$($netNativeRuntimeAppx.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Copy-Item -Path $netNativeRuntimeAppx.FullName -Destination (Join-Path $packageDir "Microsoft.NET.Native.Runtime.2.2.appx") -Force
+            "netnative_runtime_path=$packageDir\Microsoft.NET.Native.Runtime.2.2.appx" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
 
           $netNativeFrameworkAppx = Get-ChildItem -Path (Join-Path $nugetRoot "runtime.win10-x86.microsoft.net.native.sharedlibrary") `
             -Recurse -Filter "Microsoft.NET.Native.Framework.*.appx" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match "\\ret\\" } | Select-Object -First 1
           if ($netNativeFrameworkAppx) {
-            "netnative_framework_path=$($netNativeFrameworkAppx.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Copy-Item -Path $netNativeFrameworkAppx.FullName -Destination (Join-Path $packageDir "Microsoft.NET.Native.Framework.2.2.appx") -Force
+            "netnative_framework_path=$packageDir\Microsoft.NET.Native.Framework.2.2.appx" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
 
       # Remove the cert from the workspace before the artifact is captured
