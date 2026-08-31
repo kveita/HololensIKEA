@@ -94,6 +94,7 @@ jobs:
       - name: Build signed sideload package (Release x86)
         run: >
           msbuild HololensIKEA.csproj
+          /t:Publish
           /p:Configuration=Release
           /p:Platform=x86
           /p:AppxBundle=Never
