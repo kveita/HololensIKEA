@@ -121,43 +121,36 @@ jobs:
         shell: pwsh
         run: |
           $appxRoot = "${{ github.workspace }}\AppPackages"
-          $appx = Get-ChildItem -Path $appxRoot `
-            -Recurse -Filter "*.appx" |
+          $appx = Get-ChildItem -Path $appxRoot -Recurse -Include "*.appx", "*.msix" |
             Where-Object {
-              $_.Name -like "HololensIKEA_*.appx" -and
+              $_.Name -like "HololensIKEA_*" -and
               $_.Name -notlike "*Bundle*" -and
               $_.FullName -notmatch "\\Dependencies\\"
             } |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
 
-          # CI build mode emits a .msixupload (a zip containing the .appx) instead
-          # of a bare .appx; extract it so we still get a sideloadable package.
+          # CI build mode emits a .msixupload (a zip containing the .msix) instead
+          # of a bare package file; extract it so we still get a sideloadable package.
           if (-not $appx) {
             $upload = Get-ChildItem -Path $appxRoot -Recurse -Include "*.msixupload", "*.appxupload" |
               Sort-Object LastWriteTime -Descending |
               Select-Object -First 1
 
             if ($upload) {
-              Write-Host "Found upload package: $($upload.FullName)"
               $extractDir = Join-Path $upload.DirectoryName "extracted"
               $zipCopy = Join-Path $upload.DirectoryName "$($upload.BaseName).zip"
               Copy-Item -Path $upload.FullName -Destination $zipCopy -Force
               Expand-Archive -Path $zipCopy -DestinationPath $extractDir -Force
 
-              Write-Host "Extracted contents:"
-              Get-ChildItem -Path $extractDir -Recurse | ForEach-Object { Write-Host "  $($_.FullName)" }
-
-              $appx = Get-ChildItem -Path $extractDir -Recurse -Filter "*.appx" |
+              $appx = Get-ChildItem -Path $extractDir -Recurse -Include "*.appx", "*.msix" |
                 Where-Object { $_.Name -notlike "*Bundle*" } |
                 Select-Object -First 1
             }
           }
 
           if (-not $appx) {
-            Write-Host "AppPackages contents:"
-            Get-ChildItem -Path $appxRoot -Recurse | ForEach-Object { Write-Host "  $($_.FullName)" }
-            throw "No sideload .appx package found in AppPackages/."
+            throw "No sideload .appx/.msix package found in AppPackages/."
           }
 
           $packageDir = $appx.Directory.FullName
@@ -207,8 +200,8 @@ jobs:
           $tag = "v$env:NEXT_VERSION"
           $pkgPath = "${{ steps.locate_appx.outputs.appx_path }}"
           $pkgName = "${{ steps.locate_appx.outputs.appx_name }}"
-          if (-not $pkgName.EndsWith('.appx')) {
-            Write-Error "Expected .appx package for sideload release, got '$pkgName'."
+          if (-not ($pkgName.EndsWith('.appx') -or $pkgName.EndsWith('.msix'))) {
+            Write-Error "Expected .appx or .msix package for sideload release, got '$pkgName'."
           }
 
           $title = "HololensIKEA $tag"
