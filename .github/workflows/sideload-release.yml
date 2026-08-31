@@ -9,7 +9,7 @@ on:
     inputs:
       tag:
         description: "Release tag (example: v1.0.1.0)"
-        required: false
+        required: true
         type: string
 
 jobs:
@@ -27,9 +27,7 @@ jobs:
         run: |
           $tag = "${{ github.ref_name }}"
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            if (-not [string]::IsNullOrWhiteSpace("${{ github.event.inputs.tag }}")) {
-              $tag = "${{ github.event.inputs.tag }}"
-            }
+            $tag = "${{ github.event.inputs.tag }}"
           }
 
           if ($tag -notmatch '^v\d+\.\d+\.\d+(\.\d+)?$') {
@@ -241,5 +239,5 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Remove-Item -Path "$env:PFX_PATH" -ErrorAction SilentlyContinue
-          Remove-Item -Path "$env:CER_PATH" -ErrorAction SilentlyContinue
+          if ($env:PFX_PATH) { Remove-Item -Path $env:PFX_PATH -ErrorAction SilentlyContinue }
+          if ($env:CER_PATH) { Remove-Item -Path $env:CER_PATH -ErrorAction SilentlyContinue }
