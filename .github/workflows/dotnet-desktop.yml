@@ -158,6 +158,14 @@ jobs:
           "appx_name=$($appx.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "package_dir=$packageDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
+          # CI build mode doesn't bundle framework dependencies (e.g. VCLibs), so the
+          # app fails to activate on devices that don't already have them installed.
+          $vclibsAppx = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs\14.0\AppX\Retail\x86" `
+            -Filter "*.appx" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($vclibsAppx) {
+            "vclibs_path=$($vclibsAppx.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
       # Remove the cert from the workspace before the artifact is captured
       - name: Remove signing certificate
         if: always()
@@ -170,6 +178,7 @@ jobs:
           name: HololensIKEA-${{ github.sha }}-Release-x86
           path: |
             ${{ steps.locate_appx.outputs.appx_path }}
+            ${{ steps.locate_appx.outputs.vclibs_path }}
             ${{ steps.locate_appx.outputs.package_dir }}/Dependencies/**
             ${{ steps.locate_appx.outputs.package_dir }}/Install.ps1
             ${{ steps.locate_appx.outputs.package_dir }}/Add-AppDevPackage.ps1
