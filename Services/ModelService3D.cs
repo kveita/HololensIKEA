@@ -56,17 +56,16 @@ namespace HololensIKEA.Services
                         var modelUrl = FindModelUrl(html, pageUri);
                         if (modelUrl == null)
                         {
+                            // IKEA renders the <model-viewer src="...glb"> element client-side
+                            // via JavaScript after the initial page load, so it is frequently
+                            // absent from the raw HTML this simple HTTP GET receives. Use
+                            // Bookmark.GlbUrl (resolved out-of-band, e.g. with
+                            // https://github.com/apinanaivot/IKEA-3D-Model-Download-Button
+                            // in a desktop browser) to bypass this scraping step entirely.
                             Debug.WriteLine("[IKEA] No GLB URL found in product page HTML.");
                             return null;
                         }
-                        Debug.WriteLine("[IKEA] Downloading GLB: " + modelUrl);
-                        using (var modelRequest = new HttpRequestMessage(HttpMethod.Get, modelUrl))
-                        using (var modelResponse = await client.SendAsync(modelRequest, HttpCompletionOption.ResponseContentRead, ct))
-                        {
-                            modelResponse.EnsureSuccessStatusCode();
-                            var bytes = await modelResponse.Content.ReadAsByteArrayAsync();
-                            return ParseGlb(bytes);
-                        }
+                        return await DownloadAndParseGlbAsync(modelUrl.ToString(), client, ct);
                     }
                 }
             }
@@ -75,6 +74,42 @@ namespace HololensIKEA.Services
             {
                 Debug.WriteLine("[IKEA] Model fetch failed: " + ex.Message);
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Downloads and parses a GLB model from a known-good direct URL,
+        /// skipping the (unreliable) product-page scraping step entirely.
+        /// Use this when a Bookmark already carries a resolved GlbUrl.
+        /// </summary>
+        public async Task<GltfMeshData> FetchModelFromGlbUrlAsync(string glbUrl, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(glbUrl)) return null;
+            try
+            {
+                using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(45) })
+                {
+                    client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 HoloLensIKEA/1.0");
+                    return await DownloadAndParseGlbAsync(glbUrl, client, ct);
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("[IKEA] Direct GLB fetch failed: " + ex.Message);
+                return null;
+            }
+        }
+
+        private static async Task<GltfMeshData> DownloadAndParseGlbAsync(string glbUrl, HttpClient client, CancellationToken ct)
+        {
+            Debug.WriteLine("[IKEA] Downloading GLB: " + glbUrl);
+            using (var modelRequest = new HttpRequestMessage(HttpMethod.Get, glbUrl))
+            using (var modelResponse = await client.SendAsync(modelRequest, HttpCompletionOption.ResponseContentRead, ct))
+            {
+                modelResponse.EnsureSuccessStatusCode();
+                var bytes = await modelResponse.Content.ReadAsByteArrayAsync();
+                return ParseGlb(bytes);
             }
         }
 

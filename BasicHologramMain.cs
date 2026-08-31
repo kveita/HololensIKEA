@@ -130,6 +130,9 @@ namespace HololensIKEA
         private GltfMeshRenderer               _gltfMeshRenderer;
         private GltfMeshData                   _activeMeshData;
         private Task<GltfMeshData>             _pending3DModelLoad;
+        // Direct .glb URL from the selected bookmark, if resolved out-of-band
+        // (bypasses the unreliable product-page scraping in ModelService3D).
+        private string                         _pendingBookmarkGlbUrl;
 
         // --- 3D mesh independent transform ---
         private Vector3    _meshPosition = new Vector3(0f, 0f, -2f);
@@ -307,6 +310,7 @@ namespace HololensIKEA
             _bookmarksDialog.OnBookmarkSelected += (bookmark) => {
                 Debug.WriteLine("[Bookmarks] Selected: " + bookmark.Name);
                 inputBuffer = bookmark.Url;
+                _pendingBookmarkGlbUrl = bookmark.GlbUrl;
                 StartProductLoad();
             };
             LoadBookmarksAsync();
@@ -967,14 +971,22 @@ namespace HololensIKEA
                     Debug.WriteLine("Loaded: " + product.ProductName +
                         " W=" + product.WidthMeters + " H=" + product.HeightMeters + " D=" + product.DepthMeters);
 
-                    // Start 3D model fetch from the IKEA product page.
+                    // Start 3D model fetch. Prefer a bookmark-supplied direct .glb URL
+                    // (IKEA's model-viewer is client-rendered, so scraping the page's
+                    // raw HTML for it often fails); fall back to page scraping otherwise.
                     _activeMeshData = null;
                     _pending3DModelLoad = null;
-                    if (product.Has3DModel && !string.IsNullOrEmpty(product.ModelUrl))
+                    if (!string.IsNullOrEmpty(_pendingBookmarkGlbUrl))
+                    {
+                        Debug.WriteLine("[IKEA] Fetching 3D model from bookmark GlbUrl " + _pendingBookmarkGlbUrl);
+                        _pending3DModelLoad = _modelService3D.FetchModelFromGlbUrlAsync(_pendingBookmarkGlbUrl, CancellationToken.None);
+                    }
+                    else if (product.Has3DModel && !string.IsNullOrEmpty(product.ModelUrl))
                     {
                         Debug.WriteLine("[IKEA] Fetching 3D model from product page " + product.ModelUrl);
                         _pending3DModelLoad = _modelService3D.FetchModelAsync(product.ModelUrl, CancellationToken.None);
                     }
+                    _pendingBookmarkGlbUrl = null;
 
                     // Start background image download + depth analysis.
                     if (!string.IsNullOrEmpty(product.ImageUrl))
