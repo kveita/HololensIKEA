@@ -274,9 +274,12 @@ namespace HololensIKEA
                 keyboardInputHandler.InsertText(text);
             };
             // Voice input: non-numeric text while gazing at keyboard → search
+            // saved IKEA bookmarks by name (StartProductSearch queried a
+            // third-party electrical-parts catalog left over from the
+            // project this app was forked from, and is no longer used).
             _speechHandler.OnSearchQuery += (query) => {
                 Debug.WriteLine("[Voice→Search] " + query);
-                StartProductSearch(query);
+                ShowBookmarksSearch(query);
             };
             // Voice input: status changed
             _speechHandler.OnStatusChanged += (status) => {
@@ -1799,6 +1802,9 @@ namespace HololensIKEA
             {
                 await _bookmarksService.LoadAsync();
                 Debug.WriteLine($"[Bookmarks] Loaded {_bookmarksService.Count} bookmarks");
+                // Show the bookmarks list as the default landing screen so the
+                // curated IKEA products are visible without a voice command.
+                ShowBookmarksDialog();
             }
             catch (Exception ex)
             {
