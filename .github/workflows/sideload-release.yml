@@ -69,6 +69,15 @@ jobs:
       - name: NuGet restore
         run: nuget restore HololensIKEA.csproj
 
+      - name: DEBUG locate NET Native redist appx
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path "$env:USERPROFILE\.nuget\packages\microsoft.netcore.universalwindowsplatform" -Recurse -Include "*.appx" -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host $_.FullName }
+          Write-Host "---nuget root---"
+          Get-ChildItem -Path "$env:USERPROFILE\.nuget\packages" -Recurse -Include "Microsoft.NET.Native.*.appx" -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host $_.FullName }
+
       - name: Install Windows 10 SDK 19041 and UWP MSBuild tools
         shell: pwsh
         run: |
