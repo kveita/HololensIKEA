@@ -6,8 +6,5 @@
   "scripts": {
     "discover": "node scripts/discover-models.mjs"
   },
-  "dependencies": {
-    "playwright": "^1.44.0"
-  },
   "type": "module"
 }
