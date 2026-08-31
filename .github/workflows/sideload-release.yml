@@ -186,7 +186,7 @@ jobs:
           # fallback script so the sideload bundle remains deployable.
           if (-not (Test-Path $installScript)) {
             $installScript = Join-Path "${{ github.workspace }}" "Install.ps1"
-            Set-Content -Path $installScript -Value "Add-AppxPackage -Path `"$($appx.FullName)`\""
+            Set-Content -Path $installScript -Value "Add-AppxPackage -Path `"$($appx.FullName)`""
             $items += $installScript
           }
 
