@@ -1,4 +1,4 @@
-# Builds a signed Release .appx (sideload) and uploads it as a workflow artifact.
+# Builds a signed Release .msix (sideload) and uploads it as a workflow artifact.
 # Runs on every push to master (not on pull-requests).
 # No secrets required: a fresh self-signed certificate is generated per run.
 # For Store submission see dotnet.yml.
@@ -7,9 +7,9 @@
 #
 # On manual trigger with action=submit:
 # - Auto-increments Package.appxmanifest Identity Version (4th segment stays 0)
-# - Builds sideload-compatible .appx
+# - Builds sideload-compatible .msix
 # - Commits version bump back to repo
-# - Creates GitHub release with .appx attached
+# - Creates GitHub release with .msix attached
 
 name: UWP Package
 
@@ -109,81 +109,35 @@ jobs:
           /p:Configuration=Release
           /p:Platform=x86
           /p:AppxBundle=Never
-          /p:UapAppxPackageBuildMode=CI
+          /p:UapAppxPackageBuildMode=SideloadOnly
           /p:AppxPackageDir=AppPackages\
           /p:AppxPackageSigningEnabled=true
           /p:PackageCertificateKeyFile=${{ github.workspace }}\HololensIKEA_TemporaryKey.pfx
           /p:PackageCertificatePassword=ci
           /p:PackageCertificateThumbprint=""
 
-      - name: Locate sideload .appx
+      - name: Locate sideload .msix
         id: locate_appx
         shell: pwsh
         run: |
-          $appxRoot = "${{ github.workspace }}\AppPackages"
-          $appx = Get-ChildItem -Path $appxRoot -Recurse -Include "*.appx", "*.msix" |
-            Where-Object {
-              $_.Name -like "HololensIKEA_*" -and
+          $appx = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
+            -Recurse -Filter "*.msix" `
+            | Where-Object {
+              $_.Name -like "HololensIKEA_*.msix" -and
               $_.Name -notlike "*Bundle*" -and
               $_.FullName -notmatch "\\Dependencies\\"
-            } |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-
-          # CI build mode emits a .msixupload (a zip containing the .msix) instead
-          # of a bare package file; extract it so we still get a sideloadable package.
-          if (-not $appx) {
-            $upload = Get-ChildItem -Path $appxRoot -Recurse -Include "*.msixupload", "*.appxupload" |
-              Sort-Object LastWriteTime -Descending |
-              Select-Object -First 1
-
-            if ($upload) {
-              $extractDir = Join-Path $upload.DirectoryName "extracted"
-              $zipCopy = Join-Path $upload.DirectoryName "$($upload.BaseName).zip"
-              Copy-Item -Path $upload.FullName -Destination $zipCopy -Force
-              Expand-Archive -Path $zipCopy -DestinationPath $extractDir -Force
-
-              $appx = Get-ChildItem -Path $extractDir -Recurse -Include "*.appx", "*.msix" |
-                Where-Object { $_.Name -notlike "*Bundle*" } |
-                Select-Object -First 1
-            }
-          }
+            } `
+            | Sort-Object LastWriteTime -Descending `
+            | Select-Object -First 1
 
           if (-not $appx) {
-            throw "No sideload .appx/.msix package found in AppPackages/."
+            throw "No sideload .msix package found in AppPackages/."
           }
 
-          $packageDir = $appx.Directory.FullName
+          $packageDir = $appx.DirectoryName
           "appx_path=$($appx.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "appx_name=$($appx.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "package_dir=$packageDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-          # CI build mode doesn't bundle framework dependencies (e.g. VCLibs, .NET
-          # Native), so the app fails to activate on devices that don't already
-          # have them installed. Pull the matching appx files from the caches
-          # on the build agent (Windows SDK and restored NuGet packages).
-          $nugetRoot = "$env:USERPROFILE\.nuget\packages"
-          $vclibsAppx = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs\14.0\AppX\Retail\x86" `
-            -Filter "*.appx" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($vclibsAppx) {
-            Copy-Item -Path $vclibsAppx.FullName -Destination (Join-Path $packageDir "Microsoft.VCLibs.x86.14.00.appx") -Force
-            "vclibs_path=$packageDir\Microsoft.VCLibs.x86.14.00.appx" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          }
-
-          $netNativeRuntimeAppx = Get-ChildItem -Path (Join-Path $nugetRoot "runtime.win10-x86.microsoft.net.native.compiler") `
-            -Recurse -Filter "Microsoft.NET.Native.Runtime.*.appx" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($netNativeRuntimeAppx) {
-            Copy-Item -Path $netNativeRuntimeAppx.FullName -Destination (Join-Path $packageDir "Microsoft.NET.Native.Runtime.2.2.appx") -Force
-            "netnative_runtime_path=$packageDir\Microsoft.NET.Native.Runtime.2.2.appx" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          }
-
-          $netNativeFrameworkAppx = Get-ChildItem -Path (Join-Path $nugetRoot "runtime.win10-x86.microsoft.net.native.sharedlibrary") `
-            -Recurse -Filter "Microsoft.NET.Native.Framework.*.appx" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "\\ret\\" } | Select-Object -First 1
-          if ($netNativeFrameworkAppx) {
-            Copy-Item -Path $netNativeFrameworkAppx.FullName -Destination (Join-Path $packageDir "Microsoft.NET.Native.Framework.2.2.appx") -Force
-            "netnative_framework_path=$packageDir\Microsoft.NET.Native.Framework.2.2.appx" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          }
 
       # Remove the cert from the workspace before the artifact is captured
       - name: Remove signing certificate
@@ -197,14 +151,11 @@ jobs:
           name: HololensIKEA-${{ github.sha }}-Release-x86
           path: |
             ${{ steps.locate_appx.outputs.appx_path }}
-            ${{ steps.locate_appx.outputs.vclibs_path }}
-            ${{ steps.locate_appx.outputs.netnative_runtime_path }}
-            ${{ steps.locate_appx.outputs.netnative_framework_path }}
             ${{ steps.locate_appx.outputs.package_dir }}/Dependencies/**
             ${{ steps.locate_appx.outputs.package_dir }}/Install.ps1
             ${{ steps.locate_appx.outputs.package_dir }}/Add-AppDevPackage.ps1
             ${{ steps.locate_appx.outputs.package_dir }}/*.cer
-          if-no-files-found: warn
+          if-no-files-found: error
 
       # Commit version bump (only after a successful submit)
       # Commit Package.appxmanifest back to master so the repo always matches
@@ -230,8 +181,8 @@ jobs:
           $tag = "v$env:NEXT_VERSION"
           $pkgPath = "${{ steps.locate_appx.outputs.appx_path }}"
           $pkgName = "${{ steps.locate_appx.outputs.appx_name }}"
-          if (-not ($pkgName.EndsWith('.appx') -or $pkgName.EndsWith('.msix'))) {
-            Write-Error "Expected .appx or .msix package for sideload release, got '$pkgName'."
+          if (-not $pkgName.EndsWith('.msix')) {
+            Write-Error "Expected .msix package for sideload release, got '$pkgName'."
           }
 
           $title = "HololensIKEA $tag"
@@ -239,7 +190,7 @@ jobs:
           $notes = @(
             "Sideload package release for HoloLens.",
             "",
-            "Direct .appx download: [$pkgName]($downloadUrl)",
+            "Direct .msix download: [$pkgName]($downloadUrl)",
             "",
             "Package version: $env:NEXT_VERSION"
           ) -join "`n"
