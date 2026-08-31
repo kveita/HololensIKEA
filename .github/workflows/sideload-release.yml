@@ -69,15 +69,6 @@ jobs:
       - name: NuGet restore
         run: nuget restore HololensIKEA.csproj
 
-      - name: DEBUG locate NET Native redist appx
-        shell: pwsh
-        run: |
-          Get-ChildItem -Path "$env:USERPROFILE\.nuget\packages\microsoft.netcore.universalwindowsplatform" -Recurse -Include "*.appx" -ErrorAction SilentlyContinue |
-            ForEach-Object { Write-Host $_.FullName }
-          Write-Host "---nuget root---"
-          Get-ChildItem -Path "$env:USERPROFILE\.nuget\packages" -Recurse -Include "Microsoft.NET.Native.*.appx" -ErrorAction SilentlyContinue |
-            ForEach-Object { Write-Host $_.FullName }
-
       - name: Install Windows 10 SDK 19041 and UWP MSBuild tools
         shell: pwsh
         run: |
@@ -175,13 +166,22 @@ jobs:
             $items += (Get-ChildItem -Path $depDir -Recurse -File | ForEach-Object { $_.FullName })
           }
 
-          # CI build mode doesn't bundle framework dependencies (e.g. VCLibs), so the
-          # app fails to activate on devices that don't already have them installed.
-          # Pull the matching VCLibs appx from the Windows SDK on the build agent.
+          # CI build mode doesn't bundle framework dependencies (e.g. VCLibs, .NET
+          # Native), so the app fails to activate on devices that don't already
+          # have them installed. Pull the matching appx files from the caches
+          # on the build agent (Windows SDK and restored NuGet packages).
+          $nugetRoot = "$env:USERPROFILE\.nuget\packages"
           $vclibsAppx = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs\14.0\AppX\Retail\x86" `
             -Filter "*.appx" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($vclibsAppx -and ($items -notcontains $vclibsAppx.FullName)) {
-            $items += $vclibsAppx.FullName
+          $netNativeRuntimeAppx = Get-ChildItem -Path (Join-Path $nugetRoot "runtime.win10-x86.microsoft.net.native.compiler") `
+            -Recurse -Filter "Microsoft.NET.Native.Runtime.*.appx" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $netNativeFrameworkAppx = Get-ChildItem -Path (Join-Path $nugetRoot "runtime.win10-x86.microsoft.net.native.sharedlibrary") `
+            -Recurse -Filter "Microsoft.NET.Native.Framework.*.appx" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "\\ret\\" } | Select-Object -First 1
+
+          $dependencyAppx = @($vclibsAppx, $netNativeRuntimeAppx, $netNativeFrameworkAppx) | Where-Object { $_ }
+          foreach ($dep in $dependencyAppx) {
+            if ($items -notcontains $dep.FullName) { $items += $dep.FullName }
           }
 
           # Include generated install scripts when available.
@@ -203,11 +203,12 @@ jobs:
           # Some UWP outputs do not emit install scripts; generate a simple
           # fallback script so the sideload bundle remains deployable.
           # Uses relative filenames since Install.ps1 runs from the same
-          # extracted folder as the package (and VCLibs, if bundled).
+          # extracted folder as the package (and any bundled dependencies).
           if (-not (Test-Path $installScript)) {
             $installScript = Join-Path "${{ github.workspace }}" "Install.ps1"
-            if ($vclibsAppx) {
-              Set-Content -Path $installScript -Value "Add-AppxPackage -Path `".\$($appx.Name)`" -DependencyPath `".\$($vclibsAppx.Name)`""
+            $depArgs = ($dependencyAppx | ForEach-Object { "`".\$($_.Name)`"" }) -join ", "
+            if ($depArgs) {
+              Set-Content -Path $installScript -Value "Add-AppxPackage -Path `".\$($appx.Name)`" -DependencyPath $depArgs"
             } else {
               Set-Content -Path $installScript -Value "Add-AppxPackage -Path `".\$($appx.Name)`""
             }

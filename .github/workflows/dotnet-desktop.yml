@@ -158,12 +158,28 @@ jobs:
           "appx_name=$($appx.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "package_dir=$packageDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-          # CI build mode doesn't bundle framework dependencies (e.g. VCLibs), so the
-          # app fails to activate on devices that don't already have them installed.
+          # CI build mode doesn't bundle framework dependencies (e.g. VCLibs, .NET
+          # Native), so the app fails to activate on devices that don't already
+          # have them installed. Pull the matching appx files from the caches
+          # on the build agent (Windows SDK and restored NuGet packages).
+          $nugetRoot = "$env:USERPROFILE\.nuget\packages"
           $vclibsAppx = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs\14.0\AppX\Retail\x86" `
             -Filter "*.appx" -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($vclibsAppx) {
             "vclibs_path=$($vclibsAppx.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
+          $netNativeRuntimeAppx = Get-ChildItem -Path (Join-Path $nugetRoot "runtime.win10-x86.microsoft.net.native.compiler") `
+            -Recurse -Filter "Microsoft.NET.Native.Runtime.*.appx" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($netNativeRuntimeAppx) {
+            "netnative_runtime_path=$($netNativeRuntimeAppx.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
+          $netNativeFrameworkAppx = Get-ChildItem -Path (Join-Path $nugetRoot "runtime.win10-x86.microsoft.net.native.sharedlibrary") `
+            -Recurse -Filter "Microsoft.NET.Native.Framework.*.appx" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "\\ret\\" } | Select-Object -First 1
+          if ($netNativeFrameworkAppx) {
+            "netnative_framework_path=$($netNativeFrameworkAppx.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
 
       # Remove the cert from the workspace before the artifact is captured
@@ -179,6 +195,8 @@ jobs:
           path: |
             ${{ steps.locate_appx.outputs.appx_path }}
             ${{ steps.locate_appx.outputs.vclibs_path }}
+            ${{ steps.locate_appx.outputs.netnative_runtime_path }}
+            ${{ steps.locate_appx.outputs.netnative_framework_path }}
             ${{ steps.locate_appx.outputs.package_dir }}/Dependencies/**
             ${{ steps.locate_appx.outputs.package_dir }}/Install.ps1
             ${{ steps.locate_appx.outputs.package_dir }}/Add-AppDevPackage.ps1
