@@ -119,9 +119,23 @@ function findGlbUrlWithKatana(pageUrl) {
     return null;
 }
 
+function loadExistingBookmarks() {
+    if (!fs.existsSync(OUTPUT_FILE)) return new Map();
+
+    try {
+        return new Map(JSON.parse(fs.readFileSync(OUTPUT_FILE, 'utf8'))
+            .filter(bookmark => bookmark?.name && bookmark?.glbUrl)
+            .map(bookmark => [bookmark.name, bookmark]));
+    } catch (error) {
+        console.warn(`Could not read existing bookmarks: ${error.message}`);
+        return new Map();
+    }
+}
+
 async function discoverModels() {
     console.log(`Discovering ${PRODUCTS.length} bookmarked IKEA products...`);
 
+    const existingBookmarks = loadExistingBookmarks();
     const bookmarks = [];
     let resolvedCount = 0;
 
@@ -141,12 +155,21 @@ async function discoverModels() {
             resolvedCount++;
         } else {
             console.warn(`[miss] ${candidate.name}: found ${found.pipUrl} but katana observed no .glb request`);
+            const existing = existingBookmarks.get(candidate.name);
+            if (existing?.glbUrl) {
+                bookmark.glbUrl = existing.glbUrl;
+                console.log(`[keep] ${candidate.name}: retaining last verified GLB URL`);
+            }
         }
 
         bookmarks.push(bookmark);
     }
 
     const outputPath = path.join(process.cwd(), OUTPUT_FILE);
+    if (resolvedCount === 0 && existingBookmarks.size === 0) {
+        throw new Error('Katana did not discover any GLB URLs and no verified bookmarks are available to preserve.');
+    }
+
     fs.writeFileSync(outputPath, JSON.stringify(bookmarks, null, 2) + '\n');
     console.log(`Saved ${bookmarks.length} bookmarks to ${outputPath} (${resolvedCount} with a verified 3D model).`);
 
