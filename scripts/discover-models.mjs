@@ -1,28 +1,27 @@
 // discover-models.mjs
 //
 // Generates bookmarks.json for the HoloLens app by looking up each product
-// on IKEA's public search API, then resolving its direct .glb 3D model URL
-// so the app never has to scrape IKEA's product pages at runtime (IKEA
-// renders its "View in 3D" model-viewer client-side via JavaScript, so a
-// plain HTML fetch can't find the model URL there).
+// on IKEA's public search API, then using katana (https://github.com/projectdiscovery/katana)
+// in headless mode to discover its direct .glb 3D model URL, so the app
+// never has to scrape IKEA's product pages at runtime. IKEA renders its
+// "View in 3D" model-viewer client-side via JavaScript and fetches the
+// model over an XHR/fetch request as soon as the page loads, so a plain
+// HTML fetch can't see it -- but a headless browser crawl can observe that
+// network request directly, which is what katana's `-headless` mode does.
 //
-// Two IKEA endpoints make this possible without a browser:
-//  - Search:     https://sik.search.blue.cdtapps.com/{locale}/search-result-page?q={query}
-//                Returns JSON with each match's real product-page URL
-//                (pipUrl), which is more reliable than hardcoding article
-//                numbers that can go stale as IKEA's catalog changes.
-//  - 3D model:   https://web-api.ikea.com/{locale}/rotera/static/models/{articleNumber}-mini.glb
-//                where {articleNumber} is the trailing numeric id in the
-//                product page URL, e.g.
-//                https://www.ikea.com/us/en/p/billy-bookcase-oak-effect-10508932/
-//                -> https://web-api.ikea.com/us/en/rotera/static/models/10508932-mini.glb
+// Search:  https://sik.search.blue.cdtapps.com/{locale}/search-result-page?q={query}
+//          Returns JSON with each match's real product-page URL (pipUrl),
+//          which is more reliable than hardcoding article numbers that can
+//          go stale as IKEA's catalog changes.
 //
 // Multi-part "combination"/set products (article numbers prefixed with a
-// letter, e.g. ".../s29209829/") don't have a single rotera model and are
-// skipped in favor of single-part products from the same series.
+// letter, e.g. ".../s29209829/") typically don't have a single 3D model and
+// are skipped in favor of single-part products from the same series.
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
+import { spawnSync } from 'child_process';
 
 const OUTPUT_FILE = 'bookmarks.json';
 const LOCALE = 'us/en';
@@ -71,25 +70,50 @@ async function findProduct(series, query) {
     return null;
 }
 
-function buildGlbUrl(articleNumber) {
-    return `https://web-api.ikea.com/${LOCALE}/rotera/static/models/${articleNumber}-mini.glb`;
-}
+/**
+ * Visits a product page with katana's headless crawler and returns the
+ * first .glb URL observed in the page's network traffic, or null if none
+ * was seen. Crawling is capped to a single page (depth 1, 15s duration) so
+ * this never wanders off into the rest of ikea.com.
+ */
+function findGlbUrlWithKatana(pageUrl) {
+    const outFile = path.join(os.tmpdir(), `katana-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`);
+    const args = [
+        '-u', pageUrl,
+        '-headless', '-no-sandbox',
+        '-depth', '1',
+        '-extension-match', 'glb',
+        '-jsonl',
+        '-output', outFile,
+        '-silent',
+        '-timeout', '20',
+    ];
 
-/** Returns true if the URL resolves to a real, fetchable resource. */
-async function verifyUrlExists(url) {
-    try {
-        const res = await fetch(url, { method: 'HEAD' });
-        if (res.ok) return true;
-        // Some CDNs don't support HEAD; fall back to a ranged GET.
-        if (res.status === 405 || res.status === 501) {
-            const getRes = await fetch(url, { headers: { Range: 'bytes=0-0' } });
-            return getRes.ok || getRes.status === 206;
-        }
-        return false;
-    } catch (err) {
-        console.warn(`  Request failed: ${err.message}`);
-        return false;
+    // Note: -crawl-duration is intentionally not used here -- it was found to
+    // cut the headless session short before the page's async .glb request
+    // (fired by IKEA's model-viewer after load) had a chance to complete.
+    const result = spawnSync('katana', args, { encoding: 'utf8', timeout: 60000 });
+    if (result.error) {
+        console.warn(`  katana failed to run: ${result.error.message}`);
+        return null;
     }
+
+    if (!fs.existsSync(outFile)) return null;
+    const content = fs.readFileSync(outFile, 'utf8');
+    fs.rmSync(outFile, { force: true });
+
+    for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+            const record = JSON.parse(trimmed);
+            const endpoint = record?.request?.endpoint;
+            if (endpoint && /\.glb(\?|$)/i.test(endpoint)) return endpoint;
+        } catch {
+            // Not a JSON line (e.g. a stray log line); ignore.
+        }
+    }
+    return null;
 }
 
 async function discoverModels() {
@@ -106,15 +130,14 @@ async function discoverModels() {
         }
 
         const bookmark = { name: candidate.name, url: found.pipUrl };
-        const glbUrl = buildGlbUrl(found.articleNumber);
-        const exists = await verifyUrlExists(glbUrl);
+        const glbUrl = findGlbUrlWithKatana(found.pipUrl);
 
-        if (exists) {
+        if (glbUrl) {
             console.log(`[ok]   ${candidate.name}: ${found.pipUrl} -> ${glbUrl}`);
             bookmark.glbUrl = glbUrl;
             resolvedCount++;
         } else {
-            console.warn(`[miss] ${candidate.name}: found ${found.pipUrl} but no 3D model at ${glbUrl}`);
+            console.warn(`[miss] ${candidate.name}: found ${found.pipUrl} but katana observed no .glb request`);
         }
 
         bookmarks.push(bookmark);

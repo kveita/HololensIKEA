@@ -23,7 +23,14 @@ jobs:
     
     - name: Install dependencies
       run: npm install
-    
+
+    - name: Install katana
+      run: |
+        curl -sL -o katana.zip https://github.com/projectdiscovery/katana/releases/download/v1.7.0/katana_1.7.0_linux_amd64.zip
+        unzip -o -q katana.zip -d "$HOME/.local/bin-katana"
+        chmod +x "$HOME/.local/bin-katana/katana"
+        echo "$HOME/.local/bin-katana" >> "$GITHUB_PATH"
+
     - name: Generate bookmarks
       run: node scripts/discover-models.mjs
     
