@@ -99,7 +99,15 @@
     <Compile Include="Content\SearchResultsDialog.cs" />
     <Compile Include="Models\ProductInstance.cs" />
     <Compile Include="Services\ProductSearchService.cs" />
+    <Compile Include="Services\BookmarksService.cs" />
+    <Compile Include="Content\BookmarksDialog.cs" />
+    <Compile Include="Models\Bookmark.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="bookmarks.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <ItemGroup>
     <Content Include="Assets\StoreLogo.png" />

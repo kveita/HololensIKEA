@@ -1,0 +1,13 @@
+{
+  "name": "hololens-ikea-bookmarks",
+  "version": "1.0.0",
+  "description": "IKEA 3D model discovery for HoloLens",
+  "main": "scripts/discover-models.mjs",
+  "scripts": {
+    "discover": "node scripts/discover-models.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.44.0"
+  },
+  "type": "module"
+}
