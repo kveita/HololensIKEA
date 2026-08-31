@@ -42,10 +42,13 @@ namespace HololensIKEA.Services
                         ProductId = productPageUrl.GetHashCode(),
                         ProductName = ExtractTitle(html) ?? "IKEA product",
                         // IKEA product-page dimensions are not needed for model rendering;
-                        // the GLB bounds replace these defaults when it arrives.
+                        // the GLB bounds replace these defaults when it arrives. When no 3D
+                        // model is available the product photo below is shown instead of a
+                        // plain untextured placeholder box.
                         WidthMeters = 1.0f,
                         HeightMeters = 1.0f,
                         DepthMeters = 1.0f,
+                        ImageUrl = ExtractImageUrl(html),
                         Has3DModel = ModelService3D.FindModelUrl(html, pageUri) != null,
                         ModelUrl = productPageUrl
                     };
@@ -65,6 +68,15 @@ namespace HololensIKEA.Services
             title = Regex.Replace(title, @"\s+", " ").Trim();
             var separator = title.IndexOf(" - IKEA", StringComparison.OrdinalIgnoreCase);
             return separator > 0 ? title.Substring(0, separator).Trim() : title;
+        }
+
+        private static string ExtractImageUrl(string html)
+        {
+            var match = Regex.Match(html ?? string.Empty,
+                @"<meta\s+property=[""']og:image[""']\s+content=[""']([^""']+)[""']",
+                RegexOptions.IgnoreCase);
+            if (!match.Success) return null;
+            return System.Net.WebUtility.HtmlDecode(match.Groups[1].Value);
         }
     }
 }

@@ -70,6 +70,10 @@ namespace HololensIKEA.Content
         private int  _hoveredIndex = -1;
         private List<Bookmark> _bookmarks = new List<Bookmark>();
 
+        // Collapse / drag state
+        private bool _collapsed = false;
+        private bool _hoveredCollapseButton = false;
+
         private Vector3    _position = new Vector3(0, 0, -1.5f);
         private Quaternion _rotation = Quaternion.Identity;
 
@@ -107,12 +111,29 @@ namespace HololensIKEA.Content
 
         public bool IsVisible => _visible;
 
-        /// <summary>Shows the dialog with the given bookmarks.</summary>
+        /// <summary>Current world position of the panel (for drag offset calculations).</summary>
+        public Vector3 Position => _position;
+
+        /// <summary>True while the gaze ray is over the draggable title bar (not the collapse button).</summary>
+        public bool IsGazeOnTitleBar { get; private set; }
+
+        /// <summary>Repositions the panel, e.g. while the user is dragging it.</summary>
+        public void SetPosition(Vector3 position) => _position = position;
+
+        /// <summary>
+        /// Shows the dialog with the given bookmarks. If the panel is already
+        /// visible, only its contents are refreshed — position and collapsed
+        /// state are preserved so the panel stays where the user left it.
+        /// </summary>
         public void Show(List<Bookmark> bookmarks)
         {
             _bookmarks = bookmarks ?? new List<Bookmark>();
-            _position = new Vector3(0, 0, -1.5f);
-            _rotation = Quaternion.Identity;
+            if (!_visible)
+            {
+                _position = new Vector3(0, 0, -1.5f);
+                _rotation = Quaternion.Identity;
+                _collapsed = false;
+            }
             _hoveredIndex = -1;
             _visible = true;
             _labelsDirty = true;
@@ -133,9 +154,11 @@ namespace HololensIKEA.Content
         /// </summary>
         public int UpdateGaze(Vector3 gazeOrigin, Vector3 gazeDir)
         {
-            if (!_visible || _bookmarks.Count == 0)
+            if (!_visible)
             {
                 SetHoveredIndex(-1);
+                _hoveredCollapseButton = false;
+                IsGazeOnTitleBar = false;
                 return -1;
             }
 
@@ -145,6 +168,8 @@ namespace HololensIKEA.Content
             if (Math.Abs(denom) < 1e-6f)
             {
                 SetHoveredIndex(-1);
+                _hoveredCollapseButton = false;
+                IsGazeOnTitleBar = false;
                 return -1;
             }
 
@@ -152,6 +177,8 @@ namespace HololensIKEA.Content
             if (t < 0 || t > 5f)
             {
                 SetHoveredIndex(-1);
+                _hoveredCollapseButton = false;
+                IsGazeOnTitleBar = false;
                 return -1;
             }
 
@@ -165,12 +192,29 @@ namespace HololensIKEA.Content
             if (u < 0 || u > 1 || v < 0 || v > 1)
             {
                 SetHoveredIndex(-1);
+                _hoveredCollapseButton = false;
+                IsGazeOnTitleBar = false;
                 return -1;
             }
 
-            // Determine which row is hit (below header)
+            // Header area: either the collapse button (top-right) or the
+            // draggable title bar (the rest of the header).
             float headerFraction = HEADER_HEIGHT_PX / TEX_H;
             if (v < headerFraction)
+            {
+                float btnULo = (TEX_W - 56f) / TEX_W;
+                float btnVLo = 4f / TEX_H;
+                float btnVHi = (HEADER_HEIGHT_PX - 4f) / TEX_H;
+                bool onButton = u >= btnULo && v >= btnVLo && v <= btnVHi;
+                _hoveredCollapseButton = onButton;
+                IsGazeOnTitleBar = !onButton;
+                SetHoveredIndex(-1);
+                return -1;
+            }
+            _hoveredCollapseButton = false;
+            IsGazeOnTitleBar = false;
+
+            if (_collapsed || _bookmarks.Count == 0)
             {
                 SetHoveredIndex(-1);
                 return -1;
@@ -190,16 +234,30 @@ namespace HololensIKEA.Content
             return -1;
         }
 
-        /// <summary>Handles air-tap selection. Returns true if a bookmark was selected.</summary>
+        /// <summary>
+        /// Handles air-tap selection: toggles the collapse button if hovered,
+        /// otherwise selects the hovered row. The panel is intentionally left
+        /// visible after a selection so the user can pick another product.
+        /// </summary>
         public bool HandleAirTap()
         {
-            if (!_visible || _hoveredIndex < 0 || _hoveredIndex >= _bookmarks.Count)
+            if (!_visible)
+                return false;
+
+            if (_hoveredCollapseButton)
+            {
+                _collapsed = !_collapsed;
+                _labelsDirty = true;
+                Debug.WriteLine(_collapsed ? "[Bookmarks] Collapsed" : "[Bookmarks] Expanded");
+                return true;
+            }
+
+            if (_hoveredIndex < 0 || _hoveredIndex >= _bookmarks.Count)
                 return false;
 
             var selected = _bookmarks[_hoveredIndex];
             Debug.WriteLine($"[Bookmarks] Selected: {selected.Name}");
             OnBookmarkSelected?.Invoke(selected);
-            Hide();
             return true;
         }
 
@@ -281,21 +339,46 @@ namespace HololensIKEA.Content
             if (_d2dTarget == null) return;
 
             _d2dTarget.BeginDraw();
-            _d2dTarget.Clear(new SharpDX.Mathematics.Interop.RawColor4(0.05f, 0.05f, 0.15f, 0.92f));
+            var panelBg = new SharpDX.Mathematics.Interop.RawColor4(0.05f, 0.05f, 0.15f, 0.92f);
+            if (_collapsed)
+            {
+                // Fully transparent below the header so the collapsed panel
+                // only occupies visual space for its title bar.
+                _d2dTarget.Clear(new SharpDX.Mathematics.Interop.RawColor4(0, 0, 0, 0));
+                var headerBgRect = new SharpDX.Mathematics.Interop.RawRectangleF(0, 0, TEX_W, HEADER_HEIGHT_PX);
+                _d2dTarget.FillRectangle(headerBgRect, _brushBg);
+            }
+            else
+            {
+                _d2dTarget.Clear(panelBg);
+            }
 
             // Header
             var headerRect = new SharpDX.Mathematics.Interop.RawRectangleF(
-                20, 0, TEX_W - 20, HEADER_HEIGHT_PX);
+                20, 0, TEX_W - 90, HEADER_HEIGHT_PX);
             string headerText = _bookmarks.Count > 0
                 ? $"IKEA Products ({_bookmarks.Count})"
                 : "No Bookmarks";
             _d2dTarget.DrawText(headerText, _headerFont, headerRect, _brushWhite);
+
+            // Collapse / expand button (top-right of header)
+            var buttonRect = new SharpDX.Mathematics.Interop.RawRectangleF(
+                TEX_W - 56, 4, TEX_W - 8, HEADER_HEIGHT_PX - 4);
+            _d2dTarget.FillRectangle(buttonRect, _hoveredCollapseButton ? _brushRowHover : _brushRowBg);
+            string buttonGlyph = _collapsed ? "+" : "\u2212";
+            _d2dTarget.DrawText(buttonGlyph, _headerFont, buttonRect, _brushWhite);
 
             // Draw separator line
             _d2dTarget.DrawLine(
                 new SharpDX.Mathematics.Interop.RawVector2(10, HEADER_HEIGHT_PX - 2),
                 new SharpDX.Mathematics.Interop.RawVector2(TEX_W - 10, HEADER_HEIGHT_PX - 2),
                 _brushDim, 2f);
+
+            if (_collapsed)
+            {
+                _d2dTarget.EndDraw();
+                return;
+            }
 
             // Bookmarks
             int visibleCount = Math.Min(_bookmarks.Count, MAX_VISIBLE);
@@ -334,7 +417,7 @@ namespace HololensIKEA.Content
             {
                 float instrY = HEADER_HEIGHT_PX + (float)visibleCount * ROW_HEIGHT_PX + 8;
                 var instrRect = new SharpDX.Mathematics.Interop.RawRectangleF(20, instrY, TEX_W - 20, instrY + 30);
-                _d2dTarget.DrawText("Gaze at a product and air-tap to select  |  Say \"close\" to dismiss",
+                _d2dTarget.DrawText("Air-tap a product to place it  |  Drag the title bar to move  |  Tap \u2212 to collapse",
                     _subFont, instrRect, _brushDim);
             }
 

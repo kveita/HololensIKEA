@@ -87,6 +87,11 @@ namespace HololensIKEA
         private Vector3 _productPosition   = new Vector3(0f, 0f, -2f);  // cached for hit-test
         private Vector3 _productDims       = Vector3.Zero;  // zero until first product loads
 
+        // --- Bookmarks panel drag state ---
+        private bool    _isDraggingBookmarks     = false;
+        private Vector3 _bookmarksDragHandOffset = Vector3.Zero;
+        private float   _bookmarksDragGazeDistance = 1.5f;
+
         // --- Rotation state ---
         private Quaternion _productRotation      = Quaternion.Identity;
         private bool       _isRotating           = false;
@@ -309,10 +314,10 @@ namespace HololensIKEA
             spatialInputHandler  = new SpatialInputHandler();
             productRepository    = new IkeaProductRepository();
 
-            // Start immediately in input mode so the user can type an IKEA product URL.
+            // The bookmarks list (loaded above) is now the only way to pick a
+            // product; the legacy "type a product number" keyboard is no
+            // longer shown.
             appState = AppState.InputMode;
-            keyboardPositioned = false;
-            keyboardInputHandler.Show();
 #endif
 
             if (canGetDefaultHolographicDisplay)
@@ -553,12 +558,34 @@ namespace HololensIKEA
                 // Air-tap / pinch-drag dispatch.
                 //
                 // Priority:
+                //   0. Bookmarks panel title bar → start dragging the panel
                 //   1. ShowingProduct + gaze hits product edge zone  → start rotation
                 //   2. ShowingProduct + gaze hits product center zone → start drag
                 //   3. ShowingProduct + gaze hits 3D mesh → start mesh drag/rotate
                 //   4. Keyboard visible → route tap to keyboard
                 //   5. Otherwise → position spinning cube
-                if (pointerState != null && appState == AppState.ShowingProduct
+                if (pointerState != null && !_isDraggingBookmarks && _bookmarksDialog != null
+                    && _bookmarksDialog.IsVisible && _bookmarksDialog.IsGazeOnTitleBar)
+                {
+                    var loc = pointerState.Properties.TryGetLocation(stationaryReferenceFrame.CoordinateSystem);
+                    if (loc?.Position != null)
+                    {
+                        var hp = loc.Position.Value;
+                        _bookmarksDragHandOffset = new Vector3(hp.X, hp.Y, hp.Z) - _bookmarksDialog.Position;
+                    }
+                    else
+                    {
+                        _bookmarksDragHandOffset = Vector3.Zero;
+                    }
+                    if (headPose != null)
+                    {
+                        var gO = new Vector3(headPose.Head.Position.X, headPose.Head.Position.Y, headPose.Head.Position.Z);
+                        _bookmarksDragGazeDistance = Vector3.Distance(gO, _bookmarksDialog.Position);
+                    }
+                    _isDraggingBookmarks = true;
+                    Debug.WriteLine("[BookmarksDrag] Started");
+                }
+                else if (pointerState != null && appState == AppState.ShowingProduct
                     && !_isDraggingProduct && !_isRotating && !_isDraggingMesh && !_isRotatingMesh)
                 {
                     if (pose != null)
@@ -710,6 +737,27 @@ namespace HololensIKEA
 
                 // Drag update: follow hand (or gaze at fixed depth as fallback).
                 var updatedState = spatialInputHandler.CheckForUpdate();
+
+                // Bookmarks panel drag update: follow hand, or gaze at fixed depth.
+                if (_isDraggingBookmarks && _bookmarksDialog != null)
+                {
+                    if (updatedState != null)
+                    {
+                        var loc = updatedState.Properties.TryGetLocation(stationaryReferenceFrame.CoordinateSystem);
+                        if (loc?.Position != null)
+                        {
+                            var hp = loc.Position.Value;
+                            _bookmarksDialog.SetPosition(new Vector3(hp.X, hp.Y, hp.Z) - _bookmarksDragHandOffset);
+                        }
+                        else if (headPose != null)
+                        {
+                            var gO = new Vector3(headPose.Head.Position.X, headPose.Head.Position.Y, headPose.Head.Position.Z);
+                            var gD = new Vector3(headPose.Head.ForwardDirection.X, headPose.Head.ForwardDirection.Y, headPose.Head.ForwardDirection.Z);
+                            _bookmarksDialog.SetPosition(gO + gD * _bookmarksDragGazeDistance);
+                        }
+                    }
+                }
+
                 if (_isDraggingProduct && updatedState != null)
                 {
                     var loc = updatedState.Properties.TryGetLocation(
@@ -813,6 +861,11 @@ namespace HololensIKEA
                 // Release: end drag or rotation and reset highlight.
                 if (spatialInputHandler.CheckForRelease())
                 {
+                    if (_isDraggingBookmarks)
+                    {
+                        _isDraggingBookmarks = false;
+                        Debug.WriteLine("[BookmarksDrag] Dropped");
+                    }
                     if (_isDraggingProduct)
                     {
                         _isDraggingProduct = false;
@@ -1149,22 +1202,28 @@ namespace HololensIKEA
                             // Render previously saved product instances (box + sprite)
                             foreach (var inst in _productInstances)
                             {
-                                productBoxRenderer.SetPosition(inst.Position);
-                                productBoxRenderer.SetDimensions(inst.Dimensions.X, inst.Dimensions.Y, inst.Dimensions.Z);
-                                productBoxRenderer.SetRotation(inst.Rotation);
-                                productBoxRenderer.Update(timer);  // upload transform to GPU
-                                productBoxRenderer.Render();
-
-                                // Render sprite for this instance if it has a texture
-                                if (inst.TextureSRV != null)
+                                // The box/sprite are a placeholder for products without a real
+                                // GLB model (ProductServices.cs has no real dimensions/photo for
+                                // them); once a 3D mesh is available it fully replaces the box.
+                                if (inst.MeshData == null)
                                 {
-                                    productSpriteRenderer.ApplyInstanceState(
-                                        inst.Position, inst.Dimensions.X, inst.Dimensions.Y, inst.Dimensions.Z,
-                                        inst.Rotation,
-                                        inst.TextureSRV, inst.DisplacementSRV, inst.SideFaceSRV,
-                                        inst.ContentBoundsVec, inst.ViewType);
-                                    productSpriteRenderer.Update(timer);
-                                    productSpriteRenderer.Render();
+                                    productBoxRenderer.SetPosition(inst.Position);
+                                    productBoxRenderer.SetDimensions(inst.Dimensions.X, inst.Dimensions.Y, inst.Dimensions.Z);
+                                    productBoxRenderer.SetRotation(inst.Rotation);
+                                    productBoxRenderer.Update(timer);  // upload transform to GPU
+                                    productBoxRenderer.Render();
+
+                                    // Render sprite for this instance if it has a texture
+                                    if (inst.TextureSRV != null)
+                                    {
+                                        productSpriteRenderer.ApplyInstanceState(
+                                            inst.Position, inst.Dimensions.X, inst.Dimensions.Y, inst.Dimensions.Z,
+                                            inst.Rotation,
+                                            inst.TextureSRV, inst.DisplacementSRV, inst.SideFaceSRV,
+                                            inst.ContentBoundsVec, inst.ViewType);
+                                        productSpriteRenderer.Update(timer);
+                                        productSpriteRenderer.Render();
+                                    }
                                 }
 
                                 // Render 3D mesh for this saved instance
@@ -1179,21 +1238,24 @@ namespace HololensIKEA
                             }
 
                             // Render the active (most recent) product
-                            productBoxRenderer.SetPosition(_productPosition);
-                            productBoxRenderer.SetDimensions(_productDims.X, _productDims.Y, _productDims.Z);
-                            productBoxRenderer.SetRotation(_productRotation);
-                            productBoxRenderer.Update(timer);  // upload transform to GPU
-                            productBoxRenderer.Render();
-                            // Render active product sprite with tracked SRVs
-                            if (_activeTextureSRV != null)
+                            if (_activeMeshData == null)
                             {
-                                productSpriteRenderer.ApplyInstanceState(
-                                    _productPosition, _productDims.X, _productDims.Y, _productDims.Z,
-                                    _productRotation,
-                                    _activeTextureSRV, _activeDispSRV, _activeSideSRV,
-                                    _activeContentBounds, _activeViewType);
-                                productSpriteRenderer.Update(timer);
-                                productSpriteRenderer.Render();
+                                productBoxRenderer.SetPosition(_productPosition);
+                                productBoxRenderer.SetDimensions(_productDims.X, _productDims.Y, _productDims.Z);
+                                productBoxRenderer.SetRotation(_productRotation);
+                                productBoxRenderer.Update(timer);  // upload transform to GPU
+                                productBoxRenderer.Render();
+                                // Render active product sprite with tracked SRVs
+                                if (_activeTextureSRV != null)
+                                {
+                                    productSpriteRenderer.ApplyInstanceState(
+                                        _productPosition, _productDims.X, _productDims.Y, _productDims.Z,
+                                        _productRotation,
+                                        _activeTextureSRV, _activeDispSRV, _activeSideSRV,
+                                        _activeContentBounds, _activeViewType);
+                                    productSpriteRenderer.Update(timer);
+                                    productSpriteRenderer.Render();
+                                }
                             }
 
                             // Render active 3D mesh at its independent position
@@ -1214,21 +1276,24 @@ namespace HololensIKEA
                             // Even when not in ShowingProduct state, render saved instances
                             foreach (var inst in _productInstances)
                             {
-                                productBoxRenderer.SetPosition(inst.Position);
-                                productBoxRenderer.SetDimensions(inst.Dimensions.X, inst.Dimensions.Y, inst.Dimensions.Z);
-                                productBoxRenderer.SetRotation(inst.Rotation);
-                                productBoxRenderer.Update(timer);  // upload transform to GPU
-                                productBoxRenderer.Render();
-
-                                if (inst.TextureSRV != null)
+                                if (inst.MeshData == null)
                                 {
-                                    productSpriteRenderer.ApplyInstanceState(
-                                        inst.Position, inst.Dimensions.X, inst.Dimensions.Y, inst.Dimensions.Z,
-                                        inst.Rotation,
-                                        inst.TextureSRV, inst.DisplacementSRV, inst.SideFaceSRV,
-                                        inst.ContentBoundsVec, inst.ViewType);
-                                    productSpriteRenderer.Update(timer);
-                                    productSpriteRenderer.Render();
+                                    productBoxRenderer.SetPosition(inst.Position);
+                                    productBoxRenderer.SetDimensions(inst.Dimensions.X, inst.Dimensions.Y, inst.Dimensions.Z);
+                                    productBoxRenderer.SetRotation(inst.Rotation);
+                                    productBoxRenderer.Update(timer);  // upload transform to GPU
+                                    productBoxRenderer.Render();
+
+                                    if (inst.TextureSRV != null)
+                                    {
+                                        productSpriteRenderer.ApplyInstanceState(
+                                            inst.Position, inst.Dimensions.X, inst.Dimensions.Y, inst.Dimensions.Z,
+                                            inst.Rotation,
+                                            inst.TextureSRV, inst.DisplacementSRV, inst.SideFaceSRV,
+                                            inst.ContentBoundsVec, inst.ViewType);
+                                        productSpriteRenderer.Update(timer);
+                                        productSpriteRenderer.Render();
+                                    }
                                 }
 
                                 // Render 3D mesh for saved instances even outside ShowingProduct
@@ -1745,10 +1810,9 @@ namespace HololensIKEA
             
             // Reset to input mode
             appState = AppState.InputMode;
-            keyboardInputHandler.ClearText();
             inputBuffer = "";
-            keyboardInputHandler.Show();
-            
+            ShowBookmarksDialog();
+
             Debug.WriteLine("[Multi] All products cleared");
         }
 
