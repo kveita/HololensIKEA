@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (example: v1.0.1.0)"
-        required: true
+        description: "Release tag (example: v1.0.1.0). Leave blank to auto-bump to the next version."
+        required: false
         type: string
 
 jobs:
@@ -25,9 +25,23 @@ jobs:
       - name: Resolve release tag
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $tag = "${{ github.event.inputs.tag }}"
+          $manifestPath = "${{ github.workspace }}\Package.appxmanifest"
+          $inputTag = "${{ github.event.inputs.tag }}"
+
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and [string]::IsNullOrWhiteSpace($inputTag)) {
+            # No tag supplied: auto-bump the build segment and reset revision to 0.
+            $manifest = [xml](Get-Content $manifestPath)
+            $current = [Version]$manifest.Package.Identity.Version
+            $next = "{0}.{1}.{2}.0" -f $current.Major, $current.Minor, ($current.Build + 1)
+            $manifest.Package.Identity.Version = $next
+            $manifest.Save($manifestPath)
+
+            $tag = "v$next"
+            "AUTO_BUMPED=true" | Out-File -FilePath $env:GITHUB_ENV -Append
+            Write-Host "No tag provided. Auto-bumped manifest version: $($current.ToString()) -> $next"
+          } else {
+            $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") { $inputTag } else { "${{ github.ref_name }}" }
+            "AUTO_BUMPED=false" | Out-File -FilePath $env:GITHUB_ENV -Append
           }
 
           if ($tag -notmatch '^v\d+\.\d+\.\d+(\.\d+)?$') {
@@ -241,3 +255,16 @@ jobs:
         run: |
           if ($env:PFX_PATH) { Remove-Item -Path $env:PFX_PATH -ErrorAction SilentlyContinue }
           if ($env:CER_PATH) { Remove-Item -Path $env:CER_PATH -ErrorAction SilentlyContinue }
+
+      # Commit the auto-bumped manifest version back to the repo so the next
+      # run (with no tag input) continues from this release's version.
+      - name: Commit version bump
+        if: env.AUTO_BUMPED == 'true'
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Package.appxmanifest
+          git commit -m "chore: bump version to $env:RELEASE_VERSION for release [skip ci]" -q
+          git push origin HEAD:${{ github.ref_name }}
+          Write-Host "Committed and pushed Package.appxmanifest (v$env:RELEASE_VERSION)"
