@@ -26,7 +26,9 @@ jobs:
 
     - name: Install katana
       run: |
-        curl -sL -o katana.zip https://github.com/projectdiscovery/katana/releases/download/v1.7.0/katana_1.7.0_linux_amd64.zip
+        katana_url="$(curl -fsSL https://api.github.com/repos/projectdiscovery/katana/releases/latest | jq -r '.assets[] | select(.name | test("^katana_.*_linux_amd64\\.zip$")) | .browser_download_url' | head -n 1)"
+        test -n "$katana_url"
+        curl -fsSL -o katana.zip "$katana_url"
         mkdir -p "$HOME/.local/bin-katana"
         unzip -o -q katana.zip -d "$HOME/.local/bin-katana"
         chmod +x "$HOME/.local/bin-katana/katana"

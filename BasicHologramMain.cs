@@ -110,7 +110,6 @@ namespace HololensIKEA
 
         // --- Multi-product support ---
         private List<ProductInstance>      _productInstances = new List<ProductInstance>();
-        private ProductInstance            _selectedProduct = null;
         private int                        _pendingProductElnummer = 0;  // elnummer being loaded
 
         // --- Gaze state for handle visibility ---
@@ -124,6 +123,7 @@ namespace HololensIKEA
         private BookmarksService               _bookmarksService;
         private BookmarksDialog                _bookmarksDialog;
         private bool                           _bookmarksLoading = false;
+        private Queue<Bookmark>                _bookmarkLoadQueue = new Queue<Bookmark>();
 
         // --- IKEA GLB model support ---
         private ModelService3D                  _modelService3D = new ModelService3D();
@@ -276,6 +276,15 @@ namespace HololensIKEA
                 Debug.WriteLine("[Voice] Search bookmarks: " + query);
                 ShowBookmarksSearch(query);
             };
+            _speechHandler.OnBookmarkProductRequested += (recognizedText) => {
+                var bookmark = BookmarkVoiceCommandResolver.FindBookmark(
+                    recognizedText, _bookmarksService?.Bookmarks);
+                if (bookmark != null)
+                {
+                    Debug.WriteLine("[Voice] Queue bookmark: " + bookmark.Name);
+                    QueueBookmarkProductLoad(bookmark);
+                }
+            };
             // Voice input: digits spoken while gazing at keyboard → type them
             _speechHandler.OnTextForKeyboard += (text) => {
                 Debug.WriteLine("[Voice→Keyboard] " + text);
@@ -309,9 +318,7 @@ namespace HololensIKEA
             _bookmarksDialog = new BookmarksDialog(deviceResources);
             _bookmarksDialog.OnBookmarkSelected += (bookmark) => {
                 Debug.WriteLine("[Bookmarks] Selected: " + bookmark.Name);
-                inputBuffer = bookmark.Url;
-                _pendingBookmarkGlbUrl = bookmark.GlbUrl;
-                StartProductLoad();
+                QueueBookmarkProductLoad(bookmark);
             };
             LoadBookmarksAsync();
 
@@ -993,6 +1000,7 @@ namespace HololensIKEA
                         StartImageLoad(product);
                 }
                 pendingProductLoad = null;
+                StartNextBookmarkLoad();
             }
 
             // Poll for completed IKEA GLB model load.
@@ -1019,6 +1027,7 @@ namespace HololensIKEA
                     Debug.WriteLine("[IKEA] 3D model load failed: " + _pending3DModelLoad.Exception?.GetBaseException()?.Message);
                 }
                 _pending3DModelLoad = null;
+                StartNextBookmarkLoad();
             }
 #endif
 
@@ -1812,8 +1821,28 @@ namespace HololensIKEA
                 inst.DisposeTextures();
             }
             _productInstances.Clear();
-            _selectedProduct = null;
             _productDims = Vector3.Zero;
+            _bookmarkLoadQueue.Clear();
+        private void QueueBookmarkProductLoad(Bookmark bookmark)
+        {
+            if (bookmark == null || string.IsNullOrWhiteSpace(bookmark.Url))
+                return;
+
+            _bookmarkLoadQueue.Enqueue(bookmark);
+            StartNextBookmarkLoad();
+        }
+
+        private void StartNextBookmarkLoad()
+        {
+            if (_bookmarkLoadQueue.Count == 0 || pendingProductLoad != null ||
+                _pending3DModelLoad != null || appState == AppState.Loading)
+                return;
+
+            var bookmark = _bookmarkLoadQueue.Dequeue();
+            inputBuffer = bookmark.Url;
+            _pendingBookmarkGlbUrl = bookmark.GlbUrl;
+            StartProductLoad();
+        }
 
             // Dispose active product textures
             _activeTextureSRV?.Dispose(); _activeTextureSRV = null;
@@ -1826,42 +1855,6 @@ namespace HololensIKEA
             ShowBookmarksDialog();
 
             Debug.WriteLine("[Multi] All products cleared");
-        }
-
-        /// <summary>
-        /// Adds a new product instance at the specified position.
-        /// </summary>
-        private void AddProductInstance(RenderableProduct product, Vector3 position)
-        {
-            var instance = new ProductInstance(product, position);
-            _productInstances.Add(instance);
-            _selectedProduct = instance;
-
-            Debug.WriteLine($"[Multi] Added product '{product.ProductName}' (total: {_productInstances.Count})");
-        }
-
-        /// <summary>
-        /// Finds the product instance closest to the given ray.
-        /// Returns null if no product is hit.
-        /// </summary>
-        private ProductInstance FindProductAtGaze(Vector3 rayOrigin, Vector3 rayDir, float maxDist)
-        {
-            ProductInstance closest = null;
-            float closestDist = maxDist;
-
-            foreach (var inst in _productInstances)
-            {
-                if (inst.RayIntersects(rayOrigin, rayDir, closestDist, out float hitDist))
-                {
-                    if (hitDist < closestDist)
-                    {
-                        closestDist = hitDist;
-                        closest = inst;
-                    }
-                }
-            }
-
-            return closest;
         }
 
         // ── Bookmarks support ───────────────────────────────────────────────

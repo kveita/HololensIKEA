@@ -100,6 +100,7 @@
     <Compile Include="Models\ProductInstance.cs" />
     <Compile Include="Services\ProductSearchService.cs" />
     <Compile Include="Services\BookmarksService.cs" />
+    <Compile Include="Services\BookmarkVoiceCommandResolver.cs" />
     <Compile Include="Content\BookmarksDialog.cs" />
     <Compile Include="Models\Bookmark.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

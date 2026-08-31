@@ -80,7 +80,7 @@ namespace HololensIKEA.Tests
             var bookmarks = LoadBookmarks();
             foreach (var b in bookmarks)
             {
-                Assert.NotNullOrWhiteSpace(b.Name);
+                Assert.False(string.IsNullOrWhiteSpace(b.Name));
                 _output.WriteLine($"  - {b.Name}");
             }
         }
@@ -138,7 +138,7 @@ namespace HololensIKEA.Tests
             var uri = new Uri("https://www.ikea.com/us/en/p/billy/");
             var result = ModelService3D.FindModelUrl(html, uri);
             Assert.NotNull(result);
-            Assert.True(result!.ToString().EndsWith(".glb"));
+            Assert.EndsWith(".glb", result!.ToString());
         }
 
         [Fact]
@@ -148,7 +148,7 @@ namespace HololensIKEA.Tests
             var uri = new Uri("https://www.ikea.com/us/en/p/test/");
             var result = ModelService3D.FindModelUrl(html, uri);
             Assert.NotNull(result);
-            Assert.True(result!.ToString().Contains(".glb"));
+            Assert.Contains(".glb", result!.ToString());
         }
 
         [Fact]
@@ -292,7 +292,7 @@ namespace HololensIKEA.Tests
             // Each should have a name and URL
             foreach (var b in bookmarks)
             {
-                Assert.NotNullOrWhiteSpace(b.Name);
+                Assert.False(string.IsNullOrWhiteSpace(b.Name));
                 Assert.True(Uri.TryCreate(b.Url, UriKind.Absolute, out _),
                     $"Invalid URL: {b.Url}");
             }

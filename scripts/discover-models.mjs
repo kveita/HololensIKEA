@@ -73,8 +73,9 @@ async function findProduct(series, query) {
 /**
  * Visits a product page with katana's headless crawler and returns the
  * first .glb URL observed in the page's network traffic, or null if none
- * was seen. Crawling is capped to a single page (depth 1, 15s duration) so
- * this never wanders off into the rest of ikea.com.
+ * was seen. Crawling is capped to a single page. The DOM-content-loaded
+ * strategy waits for a bounded period of client-side rendering without using
+ * crawl-duration, which prematurely cancels IKEA's async model request.
  */
 function findGlbUrlWithKatana(pageUrl) {
     const outFile = path.join(os.tmpdir(), `katana-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`);
@@ -82,6 +83,8 @@ function findGlbUrlWithKatana(pageUrl) {
         '-u', pageUrl,
         '-headless', '-no-sandbox',
         '-depth', '1',
+        '-page-load-strategy', 'domcontentloaded',
+        '-dom-wait-time', '10',
         '-extension-match', 'glb',
         '-jsonl',
         '-output', outFile,
@@ -92,7 +95,7 @@ function findGlbUrlWithKatana(pageUrl) {
     // Note: -crawl-duration is intentionally not used here -- it was found to
     // cut the headless session short before the page's async .glb request
     // (fired by IKEA's model-viewer after load) had a chance to complete.
-    const result = spawnSync('katana', args, { encoding: 'utf8', timeout: 60000 });
+    const result = spawnSync('katana', args, { stdio: 'ignore', timeout: 60000 });
     if (result.error) {
         console.warn(`  katana failed to run: ${result.error.message}`);
         return null;

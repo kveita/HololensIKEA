@@ -1,14 +1,18 @@
 # HololensIKEA
 
-A native Direct3D 11 / UWP application for **Microsoft HoloLens 1** that downloads IKEA product 3D models from public IKEA product pages and presents them as movable, rotatable holograms.
+> **Unofficial educational hobby project.** This is not an IKEA product, is not affiliated with, sponsored by, or endorsed by IKEA, and uses IKEA names only to identify publicly available product pages. It is intended for learning HoloLens, Direct3D, UWP, and glTF workflows. Do not use it as a substitute for IKEA product information, measurements, availability, or official applications.
 
-The application combines the model workflow from [`EFObasenHololens`](https://github.com/turbolego/EFObasenHololens) with the HoloLens 1 x86 packaging and Microsoft Store workflows from [`HololensSatelliteViewer`](https://github.com/turbolego/HololensSatelliteViewer). IKEA model discovery follows [`IKEA-3D-Model-Download-Button`](https://github.com/apinanaivot/IKEA-3D-Model-Download-Button): locate a `.glb` or `glb_draco` URL in IKEA's `model-viewer`/`gltf-model` markup, download the binary GLB, and parse it locally.
+A native Direct3D 11 / UWP experiment for **Microsoft HoloLens 1**. It loads a curated set of public IKEA product 3D models and presents each as a movable, rotatable hologram.
+
+The project is inspired by [IKEA 3D Model Download Button](https://github.com/apinanaivot/IKEA-3D-Model-Download-Button). A weekly GitHub Actions job uses [Katana](https://github.com/projectdiscovery/katana) in headless-browser mode to visit public product pages and record the actual `.glb` request made by IKEA's client-side model viewer. The application downloads and parses those recorded GLB URLs locally.
 
 ## Application workflow
 
-At launch, the application displays its holographic keyboard. Type or paste the complete HTTPS URL of an IKEA product page and submit it. The application downloads the page, extracts the product title, resolves the model URL, downloads the GLB, parses its positions, normals, and triangle indices, and uploads the resulting mesh to the Direct3D renderer. The model is placed in front of the user and can be manipulated using the existing EFO-style gaze and air-tap workflow: gaze at the center to move it, and gaze at an edge handle to rotate it. The clear-all interaction remains available through the existing voice command path.
+At launch, the app displays a movable bookmark list. Select a product to add its model without closing the list. The model is placed in front of the user and can be moved or rotated using gaze and air tap. Multiple models are supported: selections and voice requests are queued, and each completed model remains independently visible.
 
-The page must expose a 3D model. Product pages without IKEA's “View in 3D” data cannot produce a hologram. IKEA may change its page markup or model hosting URLs; the resolver is deliberately tolerant of both `src` and `gltf-model` attributes and also scans for absolute GLB URLs.
+Voice commands include `Bookmarks` to show the list, `Clear` or `Remove all` to clear the scene, and the first word of a bookmark name to add that product. For example, saying `BILLY` three times queues three BILLY Bookcases. The recognized name must match exactly; `BILLY Bookcase` is displayed in the list but `BILLY` is the voice trigger.
+
+Only products whose current public pages expose a downloadable GLB are included. IKEA may change its markup, hosting, catalog, availability, or terms at any time; a model may therefore disappear from a future bookmark update.
 
 ## Repository structure
 
@@ -16,11 +20,12 @@ The page must expose a 3D model. Product pages without IKEA's “View in 3D” d
 | --- | --- |
 | `BasicHologramMain.cs` | HoloLens lifecycle, input, model placement, manipulation, and rendering loop. |
 | `Services/ProductServices.cs` | IKEA product-page loading and renderable product metadata creation. |
-| `Services/ModelService3D.cs` | IKEA GLB URL discovery, GLB download, binary GLB parsing, and mesh normalization. |
+| `Services/ModelService3D.cs` | GLB download, binary GLB parsing, and mesh normalization. |
+| `Services/BookmarkVoiceCommandResolver.cs` | Exact first-word bookmark aliases used by voice commands. |
 | `Content/GltfMeshRenderer.cs` | Direct3D 11 mesh upload and holographic rendering. |
 | `Content/ProductManipulationHandles.cs` | Gaze/air-tap move and rotate affordances. |
 | `HololensIKEA.csproj` | UWP project configured for HoloLens 1 and x86 packaging. |
-| `.github/workflows/` | Compile, signed artifact, and Microsoft Store submission workflows. |
+| `.github/workflows/update-bookmarks.yml` | Runs every Sunday and resolves Katana's latest published release to refresh verified bookmark GLB URLs. |
 | `deploy.ps1` | USB deployment helper using `WinAppDeployCmd.exe`. |
 
 ## Requirements
@@ -78,7 +83,7 @@ The app manifest uses the HoloLens 1-compatible `Windows.Universal` target famil
 
 The GLB parser handles the standard GLB v2 header, JSON chunk, binary chunk, position and normal accessors, and unsigned byte/short/int triangle indices. Models are centered around their bounding-box center. Implausibly large coordinate ranges are treated as millimetres and converted to metres; normal IKEA GLB exports are otherwise retained in metres. The renderer uses the existing lightweight HoloLens shader path and bakes simple directional lighting from vertex normals, avoiding a Unity or runtime-engine dependency.
 
-The application fetches only the public IKEA page and the model URL discovered from that page. It does not upload user data or require an application server. Network access can fail if IKEA blocks the device user agent, requires client-side rendering before exposing the model URL, changes its markup, or removes the product's 3D model.
+The application fetches only a recorded public GLB URL. It does not upload user data or require an application server. Network access can fail if IKEA blocks the device user agent, changes its markup or model hosting, or removes the product's 3D model.
 
 ## References
 

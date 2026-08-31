@@ -43,6 +43,8 @@ namespace HololensIKEA.Content
         public event Action OnShowBookmarks;
 
         /// <summary>Fires when a search query should be applied to bookmarks.</summary>
+        /// <summary>Fires with recognized text so the app can match bookmark product aliases.</summary>
+        public event Action<string> OnBookmarkProductRequested;
         public event Action<string> OnSearchBookmarks;
 
         /// <summary>Fires when recognized text should be typed into the keyboard.</summary>
@@ -221,6 +223,9 @@ namespace HololensIKEA.Content
                 OnStatusChanged?.Invoke("Show bookmarks");
                 return;
             }
+            // Bookmark product aliases are evaluated by the app against the
+            // bookmarks loaded from bookmarks.json (for example, "BILLY").
+            OnBookmarkProductRequested?.Invoke(textLower);
 
             // ── Keyboard-gazing mode: route to keyboard ──────────────────
             if (IsGazingAtKeyboard)
