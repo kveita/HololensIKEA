@@ -1,8 +1,7 @@
 [
   {
     "name": "BILLY Bookcase",
-    "url": "https://www.ikea.com/us/en/p/billy-bookcase-brown-walnut-effect-50508652/",
-    "glbUrl": "https://web-api.ikea.com/us/en/rotera/static/models/50508652-mini.glb"
+    "url": "https://www.ikea.com/us/en/p/billy-bookcase-brown-walnut-effect-50508652/"
   },
   {
     "name": "KALLAX Shelf Unit",
@@ -10,42 +9,34 @@
   },
   {
     "name": "HEMNES Bookcase",
-    "url": "https://www.ikea.com/us/en/p/hemnes-bookcase-white-stain-light-brown-60413502/",
-    "glbUrl": "https://web-api.ikea.com/us/en/rotera/static/models/60413502-mini.glb"
+    "url": "https://www.ikea.com/us/en/p/hemnes-bookcase-white-stain-light-brown-60413502/"
   },
   {
     "name": "BESTÅ Frame",
-    "url": "https://www.ikea.com/us/en/p/besta-frame-white-00245842/",
-    "glbUrl": "https://web-api.ikea.com/us/en/rotera/static/models/00245842-mini.glb"
+    "url": "https://www.ikea.com/us/en/p/besta-frame-white-00245842/"
   },
   {
     "name": "IVAR Cabinet",
-    "url": "https://www.ikea.com/us/en/p/ivar-cabinet-pine-40033763/",
-    "glbUrl": "https://web-api.ikea.com/us/en/rotera/static/models/40033763-mini.glb"
+    "url": "https://www.ikea.com/us/en/p/ivar-cabinet-pine-40033763/"
   },
   {
     "name": "LACK Wall Shelf",
-    "url": "https://www.ikea.com/us/en/p/lack-wall-shelf-white-50282182/",
-    "glbUrl": "https://web-api.ikea.com/us/en/rotera/static/models/50282182-mini.glb"
+    "url": "https://www.ikea.com/us/en/p/lack-wall-shelf-white-50282182/"
   },
   {
     "name": "TROFAST Frame",
-    "url": "https://www.ikea.com/us/en/p/trofast-frame-white-room-divider-10615395/",
-    "glbUrl": "https://web-api.ikea.com/us/en/rotera/static/models/10615395-mini.glb"
+    "url": "https://www.ikea.com/us/en/p/trofast-frame-white-room-divider-10615395/"
   },
   {
     "name": "EKET Cabinet",
-    "url": "https://www.ikea.com/us/en/p/eket-cabinet-with-2-doors-and-shelf-brown-walnut-effect-20574587/",
-    "glbUrl": "https://web-api.ikea.com/us/en/rotera/static/models/20574587-mini.glb"
+    "url": "https://www.ikea.com/us/en/p/eket-cabinet-with-2-doors-and-shelf-brown-walnut-effect-20574587/"
   },
   {
     "name": "MALM Dressing Table",
-    "url": "https://www.ikea.com/us/en/p/malm-dressing-table-white-10203610/",
-    "glbUrl": "https://web-api.ikea.com/us/en/rotera/static/models/10203610-mini.glb"
+    "url": "https://www.ikea.com/us/en/p/malm-dressing-table-white-10203610/"
   },
   {
     "name": "BJÖRKSNÄS Nightstand",
-    "url": "https://www.ikea.com/us/en/p/bjoerksnaes-nightstand-birch-70407360/",
-    "glbUrl": "https://web-api.ikea.com/us/en/rotera/static/models/70407360-mini.glb"
+    "url": "https://www.ikea.com/us/en/p/bjoerksnaes-nightstand-birch-70407360/"
   }
 ]
