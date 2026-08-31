@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
@@ -18,7 +17,6 @@ namespace HololensIKEA.Services
     {
         private List<Bookmark> _bookmarks = new List<Bookmark>();
         private bool _loaded = false;
-        private object _loadLock = new object();
 
         public int Count => _bookmarks.Count;
 
@@ -73,57 +71,23 @@ namespace HololensIKEA.Services
             if (_loaded)
                 return;
 
-            lock (_loadLock)
-            {
-                if (_loaded)
-                    return;
+            _loaded = true;
 
-                Task.Run(async () =>
-                {
-                    try
-                    {
-                        var file = await ApplicationData.Current.LocalFolder
-                            .GetFileAsync("bookmarks.json");
-
-                        var json = await FileIO.ReadTextAsync(file);
-                        _bookmarks = JsonConvert.DeserializeObject<List<Bookmark>>(json)
-                            ?? new List<Bookmark>();
-
-                        Debug.WriteLine($"[Bookmarks] Loaded {_bookmarks.Count} bookmarks");
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"[Bookmarks] Error loading: {ex.Message}");
-                        // Fallback: try manifest resource
-                        await LoadFromManifestAsync();
-                    }
-                    finally
-                    {
-                        _loaded = true;
-                    }
-                }).Wait();
-            }
-        }
-
-        private async Task LoadFromManifestAsync()
-        {
             try
             {
-                // Try loading from the package directory
                 var packageFolder = Windows.ApplicationModel.Package.Current.InstalledLocation;
                 var file = await packageFolder.GetFileAsync("bookmarks.json");
                 var json = await FileIO.ReadTextAsync(file);
                 _bookmarks = JsonConvert.DeserializeObject<List<Bookmark>>(json)
                     ?? new List<Bookmark>();
-                Debug.WriteLine($"[Bookmarks] Loaded {_bookmarks.Count} bookmarks from package");
+
+                Debug.WriteLine($"[Bookmarks] Loaded {_bookmarks.Count} bookmarks");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[Bookmarks] Failed to load from package: {ex.Message}");
-                // Return empty list - app will show no bookmarks
+                Debug.WriteLine($"[Bookmarks] Error loading: {ex.Message}");
                 _bookmarks = new List<Bookmark>();
             }
-            _loaded = true;
         }
 
         public void Dispose()
