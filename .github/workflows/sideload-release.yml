@@ -109,7 +109,8 @@ jobs:
         id: collect_assets
         shell: pwsh
         run: |
-          $appx = Get-ChildItem -Path "${{ github.workspace }}\AppPackages" `
+          $appxRoot = "${{ github.workspace }}\AppPackages"
+          $appx = Get-ChildItem -Path $appxRoot `
             -Recurse -Filter "*.appx" |
             Where-Object {
               $_.Name -like "HololensIKEA_*.appx" -and
@@ -118,6 +119,25 @@ jobs:
             } |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
+
+          # CI build mode emits a .msixupload (a zip containing the .appx) instead
+          # of a bare .appx; extract it so we still get a sideloadable package.
+          if (-not $appx) {
+            $upload = Get-ChildItem -Path $appxRoot -Recurse -Include "*.msixupload", "*.appxupload" |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+
+            if ($upload) {
+              $extractDir = Join-Path $upload.DirectoryName "extracted"
+              $zipCopy = Join-Path $upload.DirectoryName "$($upload.BaseName).zip"
+              Copy-Item -Path $upload.FullName -Destination $zipCopy -Force
+              Expand-Archive -Path $zipCopy -DestinationPath $extractDir -Force
+
+              $appx = Get-ChildItem -Path $extractDir -Recurse -Filter "*.appx" |
+                Where-Object { $_.Name -notlike "*Bundle*" } |
+                Select-Object -First 1
+            }
+          }
 
           if (-not $appx) {
             throw "No sideload .appx package found in AppPackages/."
