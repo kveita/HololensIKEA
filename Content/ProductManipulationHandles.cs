@@ -228,19 +228,17 @@ namespace HololensIKEA.Content
 
         /// <summary>
         /// Defines four thin rectangular strips in local unit-box space plus a
-        /// trashcan button centred above the top edge.
+        /// trashcan button positioned above the top-right corner.
         ///
         ///   z = 0.52  — front face is at z = 0.50, so handles float slightly in front.
         ///   thickness = 0.08 local units (8% of each box dimension after scaling).
         ///   halfLen   = 0.30 local units (covers 60% of the face edge, centered).
         ///
         /// Trashcan (handle 4):
-        ///   Positioned above the top handle, same z, slightly wider.
-        ///   y = 0.66 .. 0.78  (gap of 0.08 above top handle + 0.12 tall)
-        ///   x = -0.35 ..  0.35 (slightly wider than handle halfLen=0.30)
-        ///
-        /// Layout of each quad's 4 vertices (base indices N, N+1, N+2, N+3):
-        ///   N+0 = BL,  N+1 = BR,  N+2 = TL,  N+3 = TR
+        ///   Positioned above the top-right corner of the box.
+        ///   x = 0.5 + 0.08 + 0.35 = 0.93  (right of right handle)
+        ///   y = 0.5 + 0.08 + 0.06 = 0.64  (above top handle)
+        ///   z = 0.52  (same front-plane offset as handles)
         /// </summary>
         private void BuildHandlePositions()
         {
@@ -257,12 +255,13 @@ namespace HololensIKEA.Content
             // Bottom(RotateX) — horizontal strip on the bottom edge
             SetQuad(12, -halfLen,          -0.5f - thickness, halfLen, -0.5f,  z);
 
-            // Trashcan (Delete) — centred above the top edge
+            // Trashcan (Delete) — positioned above the top-right corner of the box
             const float tcHalfW = 0.35f;
             const float tcHalfH = 0.06f;
-            const float tcY     = 0.5f + thickness + tcHalfH;  // 0.66
+            const float tcY     = 0.5f + thickness + tcHalfH;       // 0.66 (above top handle)
+            const float tcX     =  0.5f + thickness + tcHalfW;      // 0.66 (right of right handle)
             const float tcZ     = z;
-            SetQuad(16, -tcHalfW, tcY - tcHalfH, tcHalfW, tcY + tcHalfH, tcZ);
+            SetQuad(16, tcX - tcHalfW, tcY - tcHalfH, tcX + tcHalfW, tcY + tcHalfH, tcZ);
 
             RebuildVertexColors();
         }
@@ -305,9 +304,10 @@ namespace HololensIKEA.Content
         public void UpdateTrashcanBounds(Vector3 position, Vector3 dims, Quaternion rotation)
         {
             // Local-space centre of the trashcan quad (unit-box coords).
-            const float localCX = 0f;
-            const float localCY = 0.5f + 0.08f + 0.06f;  // above top handle
-            const float localCZ = 0.52f;
+            // Positioned above the top-right corner.
+            const float localCX =  0.5f + 0.08f + 0.35f;  // right of right handle
+            const float localCY =  0.5f + 0.08f + 0.06f;  // above top handle
+            const float localCZ =  0.52f;
             // Local half-sizes.
             const float localHX = 0.35f;
             const float localHY = 0.06f;

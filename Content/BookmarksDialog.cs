@@ -392,6 +392,17 @@ namespace HololensIKEA.Content
                                (i % 2 == 0) ? _brushRowBg : _brushBg;
                 _d2dTarget.FillRectangle(rowRect, rowBrush);
 
+                // Top bar — draggable target indicator (brighter when gazed)
+                var topBarH = 4f;
+                var topBarBrush = (i == _hoveredIndex)
+                    ? new SharpDX.Direct2D1.SolidColorBrush(_d2dTarget,
+                        new SharpDX.Mathematics.Interop.RawColor4(0.4f, 0.9f, 1f, 1f))
+                    : new SharpDX.Direct2D1.SolidColorBrush(_d2dTarget,
+                        new SharpDX.Mathematics.Interop.RawColor4(0.2f, 0.4f, 0.6f, 0.7f));
+                var topBarRect = new SharpDX.Mathematics.Interop.RawRectangleF(0, y, TEX_W, y + topBarH);
+                _d2dTarget.FillRectangle(topBarRect, topBarBrush);
+                topBarBrush.Dispose();
+
                 // Row number
                 var numRect = new SharpDX.Mathematics.Interop.RawRectangleF(10, y + 4, 50, y + ROW_HEIGHT_PX - 4);
                 _d2dTarget.DrawText($"{i + 1}.", _itemFont, numRect, _brushDim);
