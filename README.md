@@ -88,5 +88,4 @@ The application fetches only a recorded public GLB URL. It does not upload user 
 ## References
 
 1. [IKEA 3D Model Download Button repository](https://github.com/apinanaivot/IKEA-3D-Model-Download-Button)
-2. [EFObasenHololens repository](https://github.com/turbolego/EFObasenHololens)
-3. [HololensSatelliteViewer repository](https://github.com/turbolego/HololensSatelliteViewer)
+2. [HololensSatelliteViewer repository](https://github.com/turbolego/HololensSatelliteViewer)
