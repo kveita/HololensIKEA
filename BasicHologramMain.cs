@@ -153,6 +153,10 @@ namespace HololensIKEA
         private bool                       _deleteDialogShowing = false;
         private int                        _deleteTargetInstanceIndex = -1;  // -1 = active mesh
 
+        // --- Double-tap for trashcan toggle ---
+        private DateTime      _lastMeshTapTime = DateTime.MinValue;
+        private const int     DoubleTapWindowMs = 400;
+
         // Cached reference to device resources.
         private DeviceResources             deviceResources;
 
@@ -562,6 +566,7 @@ namespace HololensIKEA
                         GazeHitsBox(gO, gD, activePosition, activeDimensions * 0.5f, 10f, out hd);
                     _manipulationHandles.IsVisible = _gazeOnMesh || _gazeOnProduct;
                     // Show trashcan only when gazing at a product that has a loaded 3D mesh.
+                    // Trashcan stays visible once toggled on via double-tap (independent of gaze).
                     _manipulationHandles.ShowTrashcan = _gazeOnMesh;
                     if (_manipulationHandles.IsVisible)
                     {
@@ -578,8 +583,10 @@ namespace HololensIKEA
                         else                 hz = ManipulationZone.MoveCenter;
                     }
                     _manipulationHandles.SetHighlight(hz);
-                    // Update trashcan world bounds for hit-testing (called every frame).
-                    if (_manipulationHandles.IsVisible && _activeMeshData != null)
+                    // Update trashcan world bounds for hit-testing.
+                    // Must update even when not gazing (trashcan may be toggled on via double-tap).
+                    if ((_manipulationHandles.IsVisible || _manipulationHandles.TrashcanVisible)
+                        && _activeMeshData != null)
                     {
                         _manipulationHandles.UpdateTrashcanBounds(
                             activePosition, activeDimensions, activeRotation);
@@ -703,44 +710,68 @@ namespace HololensIKEA
                             }
                             else if (hitMesh)
                             {
-                                // Hit the 3D mesh model — start mesh drag or rotation
-                                meshHitDist = 0f;
-                                GazeHitsBox(rayOrigin, rayDir, _meshPosition, _meshDims * 0.5f, 10f, out meshHitDist);
-                                var localOff = Vector3.Transform(
-                                    rayOrigin + rayDir * meshHitDist - _meshPosition,
-                                    Quaternion.Inverse(_meshRotation));
-                                float nx = _meshDims.X > 0 ? localOff.X / (_meshDims.X * 0.5f) : 0;
-                                float ny = _meshDims.Y > 0 ? localOff.Y / (_meshDims.Y * 0.5f) : 0;
-                                const float edge = 0.62f;
-                                bool inEdge = Math.Abs(nx) > edge || Math.Abs(ny) > edge;
+                                // Hit the 3D mesh model — detect double-tap for trashcan toggle
+                                var now = DateTime.UtcNow;
+                                bool isDoubleTap = (now - _lastMeshTapTime).TotalMilliseconds <= DoubleTapWindowMs;
+                                _lastMeshTapTime = now;
 
-                                if (inEdge)
+                                if (isDoubleTap && _activeMeshData != null)
                                 {
-                                    // Start mesh rotation
-                                    _meshRotationAxis    = Math.Abs(nx) > Math.Abs(ny) ? Vector3.UnitY : Vector3.UnitX;
-                                    _meshRotStartGazeDir = rayDir;
-                                    _meshRotStartQuat    = _meshRotation;
-                                    _isRotatingMesh      = true;
-                                    Debug.WriteLine("[MeshRotate] Started axis=" +
-                                        (_meshRotationAxis == Vector3.UnitY ? "Y" : "X"));
+                                    // Double-tap: toggle trashcan visibility
+                                    bool newState = !_manipulationHandles.TrashcanVisible;
+                                    _manipulationHandles.SetTrashcanVisible(newState);
+                                    Debug.WriteLine("[Input] Double-tap on mesh — trashcan " +
+                                        (newState ? "shown" : "hidden"));
+                                }
+                                else if (_manipulationHandles.TrashcanVisible)
+                                {
+                                    // Single-tap on mesh while trashcan is visible → hide it
+                                    _manipulationHandles.SetTrashcanVisible(false);
+                                    Debug.WriteLine("[Input] Single-tap on mesh — hiding trashcan");
                                 }
                                 else
                                 {
-                                    // Start mesh drag
-                                    var loc = pointerState.Properties.TryGetLocation(
-                                                  stationaryReferenceFrame.CoordinateSystem);
-                                    if (loc?.Position != null)
+                                    // Normal single-tap: start mesh drag or rotation
+                                    meshHitDist = 0f;
+                                    GazeHitsBox(rayOrigin, rayDir, _meshPosition, _meshDims * 0.5f, 10f, out meshHitDist);
+                                    var localOff = Vector3.Transform(
+                                        rayOrigin + rayDir * meshHitDist - _meshPosition,
+                                        Quaternion.Inverse(_meshRotation));
+                                    float nx = _meshDims.X > 0 ? localOff.X / (_meshDims.X * 0.5f) : 0;
+                                    float ny = _meshDims.Y > 0 ? localOff.Y / (_meshDims.Y * 0.5f) : 0;
+                                    const float edge = 0.62f;
+                                    bool inEdge = Math.Abs(nx) > edge || Math.Abs(ny) > edge;
+
+                                    if (inEdge)
                                     {
-                                        var hp = loc.Position.Value;
-                                        _meshDragHandOffset = new Vector3(hp.X, hp.Y, hp.Z) - _meshPosition;
+                                        // Start mesh rotation — also hide trashcan
+                                        _manipulationHandles.SetTrashcanVisible(false);
+                                        _meshRotationAxis    = Math.Abs(nx) > Math.Abs(ny) ? Vector3.UnitY : Vector3.UnitX;
+                                        _meshRotStartGazeDir = rayDir;
+                                        _meshRotStartQuat    = _meshRotation;
+                                        _isRotatingMesh      = true;
+                                        Debug.WriteLine("[MeshRotate] Started axis=" +
+                                            (_meshRotationAxis == Vector3.UnitY ? "Y" : "X"));
                                     }
                                     else
                                     {
-                                        _meshDragHandOffset = Vector3.Zero;
+                                        // Start mesh drag — also hide trashcan
+                                        _manipulationHandles.SetTrashcanVisible(false);
+                                        var loc = pointerState.Properties.TryGetLocation(
+                                                      stationaryReferenceFrame.CoordinateSystem);
+                                        if (loc?.Position != null)
+                                        {
+                                            var hp = loc.Position.Value;
+                                            _meshDragHandOffset = new Vector3(hp.X, hp.Y, hp.Z) - _meshPosition;
+                                        }
+                                        else
+                                        {
+                                            _meshDragHandOffset = Vector3.Zero;
+                                        }
+                                        _meshDragGazeDistance = meshHitDist;
+                                        _isDraggingMesh = true;
+                                        Debug.WriteLine("[MeshDrag] Started at dist=" + meshHitDist.ToString("F2"));
                                     }
-                                    _meshDragGazeDistance = meshHitDist;
-                                    _isDraggingMesh = true;
-                                    Debug.WriteLine("[MeshDrag] Started at dist=" + meshHitDist.ToString("F2"));
                                 }
                             }
                             else

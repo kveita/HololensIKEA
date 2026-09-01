@@ -48,12 +48,13 @@ namespace HololensIKEA.Content
         private SharpDX.Direct3D11.Buffer _modelCB;
 
         private ModelConstantBuffer       _cbData  = new ModelConstantBuffer { model = Matrix4x4.Identity };
-        private VertexPositionColor[]     _verts   = new VertexPositionColor[20];  // 16 handles + 4 trashcan
+        private VertexPositionColor[]     _verts   = new VertexPositionColor[32];  // 16 handles + 4 button + 12 icon
         private bool                      _usingVprt;
         private bool                      _loadingComplete;
         private bool                      _visible = true;
         private ManipulationZone          _currentZone = ManipulationZone.None;
-        private bool                      _showTrashcan = false;
+        private bool                      _showTrashcan = false;       // true = gazed-on (for initial display)
+        private bool                      _trashcanVisible = false;    // true = user toggled on, stays until tapped away
 
         // World-space bounding box for trashcan hit-testing.
         public Vector3  TrashcanWorldPos   { get; private set; }
@@ -77,7 +78,7 @@ namespace HololensIKEA.Content
             set => _visible = value;
         }
 
-        /// <summary>Gets or sets whether the trashcan delete button is visible.</summary>
+        /// <summary>Gets or sets whether the trashcan button is visible (gaze-driven toggle for initial display).</summary>
         public bool ShowTrashcan
         {
             get => _showTrashcan;
@@ -87,6 +88,17 @@ namespace HololensIKEA.Content
                 _showTrashcan = value;
                 RebuildVertexColors();
             }
+        }
+
+        /// <summary>True when the user has toggled the trashcan on via double-tap. Stays visible independent of gaze.</summary>
+        public bool TrashcanVisible => _trashcanVisible;
+
+        /// <summary>Toggles the trashcan button on/off. Caller is responsible for keeping it in sync with ShowTrashcan.</summary>
+        public void SetTrashcanVisible(bool visible)
+        {
+            if (_trashcanVisible == visible) return;
+            _trashcanVisible = visible;
+            RebuildVertexColors();
         }
 
         /// <summary>Highlights the handle corresponding to the given zone.</summary>
@@ -114,14 +126,14 @@ namespace HololensIKEA.Content
             _dr.D3DDeviceContext.UpdateSubresource(_verts, _vb, 0, 0, 0);
         }
 
-        /// <summary>Draws the four handle quads and optionally the trashcan using instanced stereo (2 eyes).</summary>
+        /// <summary>Draws the four handle quads, the trashcan button, and a simple trash can icon using instanced stereo (2 eyes).</summary>
         public void Render()
         {
             if (!_loadingComplete || !_visible) return;
 
             var ctx    = _dr.D3DDeviceContext;
             int stride = SharpDX.Utilities.SizeOf<VertexPositionColor>();
-            int indexCount = _showTrashcan ? 30 : 24;
+            int indexCount = _showTrashcan || _trashcanVisible ? 48 : 24;
 
             ctx.InputAssembler.SetVertexBuffers(0, new VertexBufferBinding(_vb, stride, 0));
             ctx.InputAssembler.SetIndexBuffer(_ib, SharpDX.DXGI.Format.R16_UInt, 0);
@@ -183,7 +195,7 @@ namespace HololensIKEA.Content
                 // ── Vertex buffer (Default usage — updated via UpdateSubresource) ──
                 _vb = this.ToDispose(SharpDX.Direct3D11.Buffer.Create(device, BindFlags.VertexBuffer, _verts));
 
-                // ── Index buffer — 4 handles + optional trashcan ──────────
+                // ── Index buffer — 4 handles + optional button + icon ───────
                 // This matches the +Z face winding of ProductBoxRenderer (same shaders).
                 var indices = new ushort[]
                 {
@@ -195,8 +207,14 @@ namespace HololensIKEA.Content
                      8,10,11,   8,11, 9,
                     // handle 3 (bottom)
                     12,14,15,  12,15,13,
-                    // handle 4 (trashcan) — indices 20-25
+                    // handle 4 (trashcan button) — indices 24-29
                     16,18,19,  16,19,17,
+                    // Trash can icon — body (indices 30-35)
+                    20,22,23,  20,23,21,
+                    // Trash can icon — lid (indices 36-41)
+                    24,26,27,  24,27,25,
+                    // Trash can icon — handle (indices 42-47)
+                    28,30,31,  28,31,29,
                 };
                 _ib = this.ToDispose(SharpDX.Direct3D11.Buffer.Create(device, BindFlags.IndexBuffer, indices));
 
@@ -228,17 +246,22 @@ namespace HololensIKEA.Content
 
         /// <summary>
         /// Defines four thin rectangular strips in local unit-box space plus a
-        /// trashcan button positioned above the top-right corner.
+        /// large trash can button above the top-center edge, with a simple icon.
         ///
         ///   z = 0.52  — front face is at z = 0.50, so handles float slightly in front.
         ///   thickness = 0.08 local units (8% of each box dimension after scaling).
         ///   halfLen   = 0.30 local units (covers 60% of the face edge, centered).
         ///
-        /// Trashcan (handle 4):
-        ///   Positioned above the top-right corner of the box.
-        ///   x = 0.5 + 0.08 + 0.35 = 0.93  (right of right handle)
-        ///   y = 0.5 + 0.08 + 0.06 = 0.64  (above top handle)
-        ///   z = 0.52  (same front-plane offset as handles)
+        /// Trashcan button (verts 16-19):
+        ///   Centered above the top edge, large target for easy gazing.
+        ///   x = -0.30 .. +0.30  (0.6 wide, slightly narrower than box width)
+        ///   y = 0.62 .. 0.78    (0.16 tall, well above the top handle)
+        ///   z = 0.52
+        ///
+        /// Trash can icon (verts 20-31): drawn on the button face.
+        ///   Body:  verts 20-23  (wide rectangle, bottom half of button)
+        ///   Lid:   verts 24-27  (slightly wider, top of button)
+        ///   Handle: verts 28-31 (small loop on lid)
         /// </summary>
         private void BuildHandlePositions()
         {
@@ -255,13 +278,38 @@ namespace HololensIKEA.Content
             // Bottom(RotateX) — horizontal strip on the bottom edge
             SetQuad(12, -halfLen,          -0.5f - thickness, halfLen, -0.5f,  z);
 
-            // Trashcan (Delete) — positioned above the top-right corner of the box
-            const float tcHalfW = 0.35f;
-            const float tcHalfH = 0.06f;
-            const float tcY     = 0.5f + thickness + tcHalfH;       // 0.66 (above top handle)
-            const float tcX     =  0.5f + thickness + tcHalfW;      // 0.66 (right of right handle)
-            const float tcZ     = z;
-            SetQuad(16, tcX - tcHalfW, tcY - tcHalfH, tcX + tcHalfW, tcY + tcHalfH, tcZ);
+            // ── Trashcan button (large, centered above top edge) ─────────
+            const float btnW = 0.30f;   // half-width
+            const float btnH = 0.08f;   // half-height
+            const float btnY =  0.5f + thickness + btnH;  // 0.66
+            const float btnZ =  z;
+            // Button background (verts 16-19)
+            SetQuad(16, -btnW, btnY - btnH, btnW, btnY + btnH, btnZ);
+
+            // ── Trash can icon on button face ────────────────────────────
+            // All icon quads are drawn slightly in front of the button (z+0.01)
+            const float iconZ = btnZ + 0.01f;
+
+            // Icon body — wide rectangle filling lower ~60% of button
+            const float bodyW    = btnW * 0.75f;   // 0.225
+            const float bodyH    = btnH * 0.85f;   // 0.068
+            const float bodyYBot = btnY - btnH * 0.3f;
+            const float bodyYTop = bodyYBot + bodyH;
+            SetQuad(20, -bodyW, bodyYBot, bodyW, bodyYTop, iconZ);
+
+            // Icon lid — slightly wider rectangle at top
+            const float lidW     = btnW * 0.85f;   // 0.255
+            const float lidH     = btnH * 0.35f;   // 0.028
+            const float lidYBot  = bodyYTop - btnH * 0.1f;
+            const float lidYTop  = lidYBot + lidH;
+            SetQuad(24, -lidW, lidYBot, lidW, lidYTop, iconZ);
+
+            // Icon handle — small loop on top of lid
+            const float handleW  = btnW * 0.30f;   // 0.09
+            const float handleH  = btnH * 0.45f;   // 0.036
+            const float handleYBot = lidYTop;
+            const float handleYTop = handleYBot + handleH;
+            SetQuad(28, -handleW, handleYBot, handleW, handleYTop, iconZ);
 
             RebuildVertexColors();
         }
@@ -289,11 +337,19 @@ namespace HololensIKEA.Content
             for (int i =  0; i <  8; i++) _verts[i].color = leftRight;
             for (int i =  8; i < 16; i++) _verts[i].color = topBottom;
 
-            // Trashcan: bright red when visible, transparent black when hidden.
-            var tcColor = _showTrashcan
-                ? new Vector3(1.0f, 0.25f, 0.15f)   // bright red-orange
-                : Vector3.Zero;
+            // Trashcan button + icon: bright red when visible, transparent black when hidden.
+            bool iconOn = _showTrashcan || _trashcanVisible;
+            var tcColor  = iconOn ? new Vector3(1.0f, 0.20f, 0.10f)  : Vector3.Zero;
+            var iconColor = iconOn ? new Vector3(1.0f, 1.0f, 1.0f)   : Vector3.Zero; // white icon
+
+            // Button background (verts 16-19)
             for (int i = 16; i < 20; i++) _verts[i].color = tcColor;
+            // Icon body (verts 20-23)
+            for (int i = 20; i < 24; i++) _verts[i].color = iconColor;
+            // Icon lid (verts 24-27)
+            for (int i = 24; i < 28; i++) _verts[i].color = iconColor;
+            // Icon handle (verts 28-31)
+            for (int i = 28; i < 32; i++) _verts[i].color = iconColor;
         }
 
         /// <summary>
@@ -303,14 +359,14 @@ namespace HololensIKEA.Content
         /// </summary>
         public void UpdateTrashcanBounds(Vector3 position, Vector3 dims, Quaternion rotation)
         {
-            // Local-space centre of the trashcan quad (unit-box coords).
-            // Positioned above the top-right corner.
-            const float localCX =  0.5f + 0.08f + 0.35f;  // right of right handle
-            const float localCY =  0.5f + 0.08f + 0.06f;  // above top handle
+            // Local-space centre of the trashcan button (unit-box coords).
+            // Centered above the top edge.
+            const float localCX =  0f;
+            const float localCY =  0.5f + 0.08f + 0.08f;  // 0.66 (above top handle)
             const float localCZ =  0.52f;
-            // Local half-sizes.
-            const float localHX = 0.35f;
-            const float localHY = 0.06f;
+            // Local half-sizes — much larger button for easier gazing.
+            const float localHX = 0.30f;
+            const float localHY = 0.08f;
             const float localHZ = 0.01f;  // thin
 
             // Transform centre to world space.
