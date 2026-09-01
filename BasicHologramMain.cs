@@ -538,7 +538,7 @@ namespace HololensIKEA
                 // Update manipulation handle highlights based on current gaze (runs every frame).
                 // Handles are only visible when gazing at the product.
                 if (appState == AppState.ShowingProduct && headPose != null
-                    && !_isDraggingProduct && !_isRotating)
+                    && !_isDraggingProduct && !_isRotating && !_isDraggingMesh && !_isRotatingMesh)
                 {
                     var gO = new Vector3(headPose.Head.Position.X,
                                          headPose.Head.Position.Y,
@@ -548,15 +548,21 @@ namespace HololensIKEA
                                          headPose.Head.ForwardDirection.Z);
                     float hd;
                     var hz = ManipulationZone.None;
-                    _gazeOnProduct = GazeHitsBox(gO, gD, _productPosition, _productDims * 0.5f, 10f, out hd);
-                    _manipulationHandles.IsVisible = _gazeOnProduct;
-                    if (_gazeOnProduct)
+                    var activePosition = _activeMeshData != null ? _meshPosition : _productPosition;
+                    var activeDimensions = _activeMeshData != null ? _meshDims : _productDims;
+                    var activeRotation = _activeMeshData != null ? _meshRotation : _productRotation;
+                    _gazeOnMesh = _activeMeshData != null &&
+                        GazeHitsBox(gO, gD, activePosition, activeDimensions * 0.5f, 10f, out hd);
+                    _gazeOnProduct = _activeMeshData == null && !_activeProductRequiresMesh &&
+                        GazeHitsBox(gO, gD, activePosition, activeDimensions * 0.5f, 10f, out hd);
+                    _manipulationHandles.IsVisible = _gazeOnMesh || _gazeOnProduct;
+                    if (_manipulationHandles.IsVisible)
                     {
                         var localOff = Vector3.Transform(
-                            gO + gD * hd - _productPosition,
-                            Quaternion.Inverse(_productRotation));
-                        float nx = localOff.X / (_productDims.X * 0.5f);
-                        float ny = localOff.Y / (_productDims.Y * 0.5f);
+                            gO + gD * hd - activePosition,
+                            Quaternion.Inverse(activeRotation));
+                        float nx = localOff.X / (activeDimensions.X * 0.5f);
+                        float ny = localOff.Y / (activeDimensions.Y * 0.5f);
                         const float edge = 0.62f;
                         if      (nx < -edge) hz = ManipulationZone.RotateLeft;
                         else if (nx >  edge) hz = ManipulationZone.RotateRight;
@@ -610,7 +616,8 @@ namespace HololensIKEA
                                                     pose.Head.ForwardDirection.Z);
                         float hitDist;
                         float meshHitDist = 0f;
-                        bool hitProduct = GazeHitsBox(rayOrigin, rayDir, _productPosition,
+                        bool hitProduct = _activeMeshData == null && !_activeProductRequiresMesh &&
+                                          GazeHitsBox(rayOrigin, rayDir, _productPosition,
                                         _productDims * 0.5f, 10f, out hitDist);
                         bool hitMesh = _activeMeshData != null &&
                                        GazeHitsBox(rayOrigin, rayDir, _meshPosition,
@@ -1016,10 +1023,8 @@ namespace HololensIKEA
                     _gltfMeshRenderer.SetMeshData(_activeMeshData);
                     _meshDims = _activeMeshData.BoundsMeters;
 
-                    // Position the 3D model to the right of the box model
-                    _meshPosition = _productPosition + Vector3.Transform(
-                        new Vector3(_productDims.X * 0.5f + _meshDims.X * 0.5f + 0.05f, 0f, 0f),
-                        _productRotation);
+                    // A bookmark's real mesh replaces the hidden product-card placeholder.
+                    _meshPosition = _productPosition;
                     _meshRotation = _productRotation;
 
                     Debug.WriteLine("[IKEA] 3D model loaded: " + _activeMeshData.Positions.Length + " verts, " + (_activeMeshData.Indices.Length / 3) + " tris");
@@ -1075,12 +1080,15 @@ namespace HololensIKEA
                 {
                     productBoxRenderer.Update(timer);
                     productSpriteRenderer.Update(timer);
-                    _manipulationHandles.SetTransform(_productPosition, _productDims, _productRotation);
+                    var activePosition = _activeMeshData != null ? _meshPosition : _productPosition;
+                    var activeDimensions = _activeMeshData != null ? _meshDims : _productDims;
+                    var activeRotation = _activeMeshData != null ? _meshRotation : _productRotation;
+                    _manipulationHandles.SetTransform(activePosition, activeDimensions, activeRotation);
                     _manipulationHandles.Update();
-                    // Update dimension labels to follow the product
-                    _dimensionLabels.SetDimensions(_productDims.X, _productDims.Y, _productDims.Z);
-                    _dimensionLabels.SetPosition(_productPosition);
-                    _dimensionLabels.SetRotation(_productRotation);
+                    // Update dimension labels to follow the visible product representation.
+                    _dimensionLabels.SetDimensions(activeDimensions.X, activeDimensions.Y, activeDimensions.Z);
+                    _dimensionLabels.SetPosition(activePosition);
+                    _dimensionLabels.SetRotation(activeRotation);
                     _dimensionLabels.Update();
                 }
                 else
