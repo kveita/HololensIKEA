@@ -2043,13 +2043,16 @@ namespace HololensIKEA
                 // Revert to box+sprite state for the current product.
                 _activeMeshData = null;
                 _activeProductRequiresMesh = false;
+                _pending3DModelLoad = null;  // prevent re-loading after delete
                 _meshPosition = _productPosition;
                 _meshRotation = _productRotation;
                 _meshDims = Vector3.Zero;
+                // Hide the placeholder box — it was only a stand-in for the mesh.
+                _productDims = Vector3.Zero;
                 _isDraggingMesh = false;
                 _isRotatingMesh = false;
                 _manipulationHandles.SetHighlight(ManipulationZone.None);
-                Debug.WriteLine("[Delete] Active mesh deleted — reverting to box view");
+                Debug.WriteLine("[Delete] Active mesh deleted — box hidden");
             }
             else if (idx >= 0 && idx < _productInstances.Count)
             {

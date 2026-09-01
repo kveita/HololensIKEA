@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <!-- Sofa emoji 🛋️ -->
+  <!-- Backrest -->
+  <rect x="30" y="45" width="140" height="70" rx="12" ry="12" fill="#C87D5E"/>
+  <rect x="30" y="45" width="140" height="35" rx="12" ry="12" fill="#E8A87C"/>
+  
+  <!-- Seat cushions -->
+  <ellipse cx="70" cy="125" rx="45" ry="25" fill="#0B52A0"/>
+  <ellipse cx="130" cy="125" rx="45" ry="25" fill="#0B52A0"/>
+  
+  <!-- Seat base -->
+  <rect x="25" y="115" width="150" height="25" rx="8" ry="8" fill="#A65F3E"/>
+  
+  <!-- Left armrest -->
+  <rect x="15" y="85" width="25" height="55" rx="10" ry="10" fill="#C87D5E"/>
+  <rect x="15" y="85" width="25" height="28" rx="10" ry="10" fill="#E8A87C"/>
+  
+  <!-- Right armrest -->
+  <rect x="160" y="85" width="25" height="55" rx="10" ry="10" fill="#C87D5E"/>
+  <rect x="160" y="85" width="25" height="28" rx="10" ry="10" fill="#E8A87C"/>
+  
+  <!-- Legs -->
+  <rect x="40" y="165" width="8" height="25" rx="2" fill="#5D3A1A"/>
+  <rect x="152" y="165" width="8" height="25" rx="2" fill="#5D3A1A"/>
+</svg>
