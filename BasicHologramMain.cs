@@ -16,6 +16,7 @@ using Windows.Graphics.DirectX.Direct3D11;
 using Windows.Graphics.Holographic;
 using Windows.Perception.Spatial;
 using Windows.UI.Input.Spatial;
+using Windows.UI.Popups;
 
 using HololensIKEA.Common;
 using HololensIKEA.Content;
@@ -147,6 +148,10 @@ namespace HololensIKEA
         private Vector3    _meshRotStartGazeDir = Vector3.Zero;
         private Quaternion _meshRotStartQuat = Quaternion.Identity;
         private bool       _gazeOnMesh = false;
+
+        // --- Delete confirmation dialog state ---
+        private bool                       _deleteDialogShowing = false;
+        private int                        _deleteTargetInstanceIndex = -1;  // -1 = active mesh
 
         // Cached reference to device resources.
         private DeviceResources             deviceResources;
@@ -672,44 +677,25 @@ namespace HololensIKEA
                         }
                         else if (hitMesh)
                         {
-                            // Hit the 3D mesh model — start mesh drag or rotation
-                            meshHitDist = 0f;
-                            GazeHitsBox(rayOrigin, rayDir, _meshPosition, _meshDims * 0.5f, 10f, out meshHitDist);
-                            var localOff = Vector3.Transform(
-                                rayOrigin + rayDir * meshHitDist - _meshPosition,
-                                Quaternion.Inverse(_meshRotation));
-                            float nx = _meshDims.X > 0 ? localOff.X / (_meshDims.X * 0.5f) : 0;
-                            float ny = _meshDims.Y > 0 ? localOff.Y / (_meshDims.Y * 0.5f) : 0;
-                            const float edge = 0.62f;
-                            bool inEdge = Math.Abs(nx) > edge || Math.Abs(ny) > edge;
-
-                            if (inEdge)
+                            // Hit the 3D mesh model — show delete confirmation dialog
+                            ShowDeleteMeshDialog(/* instanceIndex */ -1);
+                        }
+                        else
+                        {
+                            // Check saved instances for 3D mesh hits
+                            for (int i = 0; i < _productInstances.Count; i++)
                             {
-                                // Start mesh rotation
-                                _meshRotationAxis    = Math.Abs(nx) > Math.Abs(ny) ? Vector3.UnitY : Vector3.UnitX;
-                                _meshRotStartGazeDir = rayDir;
-                                _meshRotStartQuat    = _meshRotation;
-                                _isRotatingMesh      = true;
-                                Debug.WriteLine("[MeshRotate] Started axis=" +
-                                    (_meshRotationAxis == Vector3.UnitY ? "Y" : "X"));
-                            }
-                            else
-                            {
-                                // Start mesh drag
-                                var loc = pointerState.Properties.TryGetLocation(
-                                              stationaryReferenceFrame.CoordinateSystem);
-                                if (loc?.Position != null)
+                                var inst = _productInstances[i];
+                                if (inst.MeshData != null)
                                 {
-                                    var hp = loc.Position.Value;
-                                    _meshDragHandOffset = new Vector3(hp.X, hp.Y, hp.Z) - _meshPosition;
+                                    float instHitDist;
+                                    if (GazeHitsBox(rayOrigin, rayDir, inst.MeshPosition,
+                                        inst.HalfExtents, 10f, out instHitDist))
+                                    {
+                                        ShowDeleteMeshDialog(i);
+                                        break;
+                                    }
                                 }
-                                else
-                                {
-                                    _meshDragHandOffset = Vector3.Zero;
-                                }
-                                _meshDragGazeDistance = meshHitDist;
-                                _isDraggingMesh = true;
-                                Debug.WriteLine("[MeshDrag] Started at dist=" + meshHitDist.ToString("F2"));
                             }
                         }
                         else if (_searchResultsDialog != null && _searchResultsDialog.IsVisible)
@@ -1934,6 +1920,77 @@ namespace HololensIKEA
             else
             {
                 Debug.WriteLine($"[Bookmarks] No results for '{query}'");
+            }
+        }
+
+        // ── Delete mesh confirmation dialog ─────────────────────────────────
+
+        /// <summary>
+        /// Shows a native Windows UWP confirmation dialog asking whether to delete
+        /// the 3D model at the given instance index. Pass -1 to target the active mesh.
+        /// </summary>
+        private async void ShowDeleteMeshDialog(int instanceIndex)
+        {
+            if (_deleteDialogShowing)
+                return;
+            _deleteDialogShowing = true;
+            _deleteTargetInstanceIndex = instanceIndex;
+
+            var productName = instanceIndex >= 0
+                ? (_productInstances[instanceIndex].Product?.ProductName ?? "Product")
+                : "Product";
+
+            var dialog = new MessageDialog(
+                $"Delete {productName} from the scene?",
+                "Delete 3D Model");
+            dialog.Commands.Add(new UICommand("Yes", async (cmd) => await ConfirmDeleteMeshAsync()));
+            dialog.Commands.Add(new UICommand("No",  async (cmd) => { _deleteDialogShowing = false; }));
+            dialog.DefaultCommandIndex = 1;  // No = default
+            dialog.CancelCommandIndex  = 1;
+
+            try
+            {
+                var result = await dialog.ShowAsync();
+                // Handled in the "Yes" callback above.
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Delete] Dialog error: {ex.Message}");
+            }
+            finally
+            {
+                // Reset flag if the "No" callback already did (it sets it false).
+                _deleteDialogShowing = false;
+            }
+        }
+
+        private async Task ConfirmDeleteMeshAsync()
+        {
+            _deleteDialogShowing = false;
+            int idx = _deleteTargetInstanceIndex;
+            _deleteTargetInstanceIndex = -1;
+
+            Debug.WriteLine($"[Delete] Confirming delete, instanceIndex={idx}");
+
+            if (idx == -1)
+            {
+                // Delete the active (most recent) mesh.
+                // Revert to box+sprite state for the current product.
+                _activeMeshData = null;
+                _activeProductRequiresMesh = false;
+                _meshPosition = _productPosition;
+                _meshRotation = _productRotation;
+                _meshDims = Vector3.Zero;
+                _isDraggingMesh = false;
+                _isRotatingMesh = false;
+                _manipulationHandles.SetHighlight(ManipulationZone.None);
+                Debug.WriteLine("[Delete] Active mesh deleted — reverting to box view");
+            }
+            else if (idx >= 0 && idx < _productInstances.Count)
+            {
+                var inst = _productInstances[idx];
+                inst.MeshData = null;
+                Debug.WriteLine($"[Delete] Instance #{idx + 1} 3D model removed ({_productInstances.Count} instances remain)");
             }
         }
     }
