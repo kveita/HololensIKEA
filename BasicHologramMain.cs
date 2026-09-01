@@ -546,7 +546,7 @@ namespace HololensIKEA
                     var gD = new Vector3(headPose.Head.ForwardDirection.X,
                                          headPose.Head.ForwardDirection.Y,
                                          headPose.Head.ForwardDirection.Z);
-                    float hd;
+                    float hd = 0f;
                     var hz = ManipulationZone.None;
                     var activePosition = _activeMeshData != null ? _meshPosition : _productPosition;
                     var activeDimensions = _activeMeshData != null ? _meshDims : _productDims;
@@ -614,7 +614,7 @@ namespace HololensIKEA
                         var rayDir    = new Vector3(pose.Head.ForwardDirection.X,
                                                     pose.Head.ForwardDirection.Y,
                                                     pose.Head.ForwardDirection.Z);
-                        float hitDist;
+                        float hitDist = 0f;
                         float meshHitDist = 0f;
                         bool hitProduct = _activeMeshData == null && !_activeProductRequiresMesh &&
                                           GazeHitsBox(rayOrigin, rayDir, _productPosition,
