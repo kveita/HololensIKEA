@@ -638,6 +638,7 @@ namespace HololensIKEA
                                        _meshDims * 0.5f, 10f, out meshHitDist);
 
                         // Priority 1: trashcan hit → delete confirmation dialog.
+                        bool trashcanTapped = false;
                         if (_manipulationHandles.ShowTrashcan && _activeMeshData != null)
                         {
                             float tcHitDist;
@@ -647,119 +648,121 @@ namespace HololensIKEA
                             {
                                 Debug.WriteLine("[Input] Air-tap on trashcan — show delete dialog");
                                 ShowDeleteMeshDialog(/* instanceIndex */ -1);
-                                goto skipProductMeshTap;
+                                trashcanTapped = true;
                             }
                         }
 
-                        if (hitProduct && (!hitMesh || hitDist <= meshHitDist))
+                        if (!trashcanTapped)
                         {
-                            // Determine zone: outer 38% of each axis = rotation handle.
-                            var localOff = Vector3.Transform(
-                                rayOrigin + rayDir * hitDist - _productPosition,
-                                Quaternion.Inverse(_productRotation));
-                            float nx = localOff.X / (_productDims.X * 0.5f);
-                            float ny = localOff.Y / (_productDims.Y * 0.5f);
-                            const float edge   = 0.62f;
-                            bool  inEdge = Math.Abs(nx) > edge || Math.Abs(ny) > edge;
+                            if (hitProduct && (!hitMesh || hitDist <= meshHitDist))
+                            {
+                                // Determine zone: outer 38% of each axis = rotation handle.
+                                var localOff = Vector3.Transform(
+                                    rayOrigin + rayDir * hitDist - _productPosition,
+                                    Quaternion.Inverse(_productRotation));
+                                float nx = localOff.X / (_productDims.X * 0.5f);
+                                float ny = localOff.Y / (_productDims.Y * 0.5f);
+                                const float edge   = 0.62f;
+                                bool  inEdge = Math.Abs(nx) > edge || Math.Abs(ny) > edge;
 
-                            if (inEdge)
-                            {
-                                // Start rotation — Y-axis for horizontal edges, X-axis for vertical.
-                                _rotationAxis         = Math.Abs(nx) > Math.Abs(ny)
-                                    ? Vector3.UnitY : Vector3.UnitX;
-                                _rotationStartGazeDir = rayDir;
-                                _rotationStartQuat    = _productRotation;
-                                _isRotating           = true;
-                                var rotZone = nx < -edge ? ManipulationZone.RotateLeft  :
-                                              nx >  edge ? ManipulationZone.RotateRight :
-                                              ny >  edge ? ManipulationZone.RotateTop   :
-                                                           ManipulationZone.RotateBottom;
-                                _manipulationHandles.SetHighlight(rotZone);
-                                Debug.WriteLine("[Rotate] Started axis=" +
-                                    (_rotationAxis == Vector3.UnitY ? "Y" : "X"));
-                            }
-                            else
-                            {
-                                // Start drag (move).
-                                var loc = pointerState.Properties.TryGetLocation(
-                                              stationaryReferenceFrame.CoordinateSystem);
-                                if (loc?.Position != null)
+                                if (inEdge)
                                 {
-                                    var hp = loc.Position.Value;
-                                    _dragHandOffset = new Vector3(hp.X, hp.Y, hp.Z) - _productPosition;
+                                    // Start rotation — Y-axis for horizontal edges, X-axis for vertical.
+                                    _rotationAxis         = Math.Abs(nx) > Math.Abs(ny)
+                                        ? Vector3.UnitY : Vector3.UnitX;
+                                    _rotationStartGazeDir = rayDir;
+                                    _rotationStartQuat    = _productRotation;
+                                    _isRotating           = true;
+                                    var rotZone = nx < -edge ? ManipulationZone.RotateLeft  :
+                                                  nx >  edge ? ManipulationZone.RotateRight :
+                                                  ny >  edge ? ManipulationZone.RotateTop   :
+                                                               ManipulationZone.RotateBottom;
+                                    _manipulationHandles.SetHighlight(rotZone);
+                                    Debug.WriteLine("[Rotate] Started axis=" +
+                                        (_rotationAxis == Vector3.UnitY ? "Y" : "X"));
                                 }
                                 else
                                 {
-                                    _dragHandOffset = Vector3.Zero;
-                                }
-                                _dragGazeDistance  = hitDist;
-                                _isDraggingProduct = true;
-                                _manipulationHandles.SetHighlight(ManipulationZone.MoveCenter);
-                                Debug.WriteLine("[Drag] Started at dist=" + hitDist.ToString("F2"));
-                            }
-                        }
-                        else if (hitMesh)
-                        {
-                            // Hit the 3D mesh model — start mesh drag or rotation
-                            meshHitDist = 0f;
-                            GazeHitsBox(rayOrigin, rayDir, _meshPosition, _meshDims * 0.5f, 10f, out meshHitDist);
-                            var localOff = Vector3.Transform(
-                                rayOrigin + rayDir * meshHitDist - _meshPosition,
-                                Quaternion.Inverse(_meshRotation));
-                            float nx = _meshDims.X > 0 ? localOff.X / (_meshDims.X * 0.5f) : 0;
-                            float ny = _meshDims.Y > 0 ? localOff.Y / (_meshDims.Y * 0.5f) : 0;
-                            const float edge = 0.62f;
-                            bool inEdge = Math.Abs(nx) > edge || Math.Abs(ny) > edge;
-
-                            if (inEdge)
-                            {
-                                // Start mesh rotation
-                                _meshRotationAxis    = Math.Abs(nx) > Math.Abs(ny) ? Vector3.UnitY : Vector3.UnitX;
-                                _meshRotStartGazeDir = rayDir;
-                                _meshRotStartQuat    = _meshRotation;
-                                _isRotatingMesh      = true;
-                                Debug.WriteLine("[MeshRotate] Started axis=" +
-                                    (_meshRotationAxis == Vector3.UnitY ? "Y" : "X"));
-                            }
-                            else
-                            {
-                                // Start mesh drag
-                                var loc = pointerState.Properties.TryGetLocation(
-                                              stationaryReferenceFrame.CoordinateSystem);
-                                if (loc?.Position != null)
-                                {
-                                    var hp = loc.Position.Value;
-                                    _meshDragHandOffset = new Vector3(hp.X, hp.Y, hp.Z) - _meshPosition;
-                                }
-                                else
-                                {
-                                    _meshDragHandOffset = Vector3.Zero;
-                                }
-                                _meshDragGazeDistance = meshHitDist;
-                                _isDraggingMesh = true;
-                                Debug.WriteLine("[MeshDrag] Started at dist=" + meshHitDist.ToString("F2"));
-                            }
-                        }
-                        else
-                        {
-                            // Check saved instances for 3D mesh hits
-                            for (int i = 0; i < _productInstances.Count; i++)
-                            {
-                                var inst = _productInstances[i];
-                                if (inst.MeshData != null)
-                                {
-                                    float instHitDist;
-                                    if (GazeHitsBox(rayOrigin, rayDir, inst.MeshPosition,
-                                        inst.HalfExtents, 10f, out instHitDist))
+                                    // Start drag (move).
+                                    var loc = pointerState.Properties.TryGetLocation(
+                                                  stationaryReferenceFrame.CoordinateSystem);
+                                    if (loc?.Position != null)
                                     {
-                                        // Tap on a saved instance mesh — show its delete dialog.
-                                        ShowDeleteMeshDialog(i);
-                                        break;
+                                        var hp = loc.Position.Value;
+                                        _dragHandOffset = new Vector3(hp.X, hp.Y, hp.Z) - _productPosition;
+                                    }
+                                    else
+                                    {
+                                        _dragHandOffset = Vector3.Zero;
+                                    }
+                                    _dragGazeDistance  = hitDist;
+                                    _isDraggingProduct = true;
+                                    _manipulationHandles.SetHighlight(ManipulationZone.MoveCenter);
+                                    Debug.WriteLine("[Drag] Started at dist=" + hitDist.ToString("F2"));
+                                }
+                            }
+                            else if (hitMesh)
+                            {
+                                // Hit the 3D mesh model — start mesh drag or rotation
+                                meshHitDist = 0f;
+                                GazeHitsBox(rayOrigin, rayDir, _meshPosition, _meshDims * 0.5f, 10f, out meshHitDist);
+                                var localOff = Vector3.Transform(
+                                    rayOrigin + rayDir * meshHitDist - _meshPosition,
+                                    Quaternion.Inverse(_meshRotation));
+                                float nx = _meshDims.X > 0 ? localOff.X / (_meshDims.X * 0.5f) : 0;
+                                float ny = _meshDims.Y > 0 ? localOff.Y / (_meshDims.Y * 0.5f) : 0;
+                                const float edge = 0.62f;
+                                bool inEdge = Math.Abs(nx) > edge || Math.Abs(ny) > edge;
+
+                                if (inEdge)
+                                {
+                                    // Start mesh rotation
+                                    _meshRotationAxis    = Math.Abs(nx) > Math.Abs(ny) ? Vector3.UnitY : Vector3.UnitX;
+                                    _meshRotStartGazeDir = rayDir;
+                                    _meshRotStartQuat    = _meshRotation;
+                                    _isRotatingMesh      = true;
+                                    Debug.WriteLine("[MeshRotate] Started axis=" +
+                                        (_meshRotationAxis == Vector3.UnitY ? "Y" : "X"));
+                                }
+                                else
+                                {
+                                    // Start mesh drag
+                                    var loc = pointerState.Properties.TryGetLocation(
+                                                  stationaryReferenceFrame.CoordinateSystem);
+                                    if (loc?.Position != null)
+                                    {
+                                        var hp = loc.Position.Value;
+                                        _meshDragHandOffset = new Vector3(hp.X, hp.Y, hp.Z) - _meshPosition;
+                                    }
+                                    else
+                                    {
+                                        _meshDragHandOffset = Vector3.Zero;
+                                    }
+                                    _meshDragGazeDistance = meshHitDist;
+                                    _isDraggingMesh = true;
+                                    Debug.WriteLine("[MeshDrag] Started at dist=" + meshHitDist.ToString("F2"));
+                                }
+                            }
+                            else
+                            {
+                                // Check saved instances for 3D mesh hits
+                                for (int i = 0; i < _productInstances.Count; i++)
+                                {
+                                    var inst = _productInstances[i];
+                                    if (inst.MeshData != null)
+                                    {
+                                        float instHitDist;
+                                        if (GazeHitsBox(rayOrigin, rayDir, inst.MeshPosition,
+                                            inst.HalfExtents, 10f, out instHitDist))
+                                        {
+                                            // Tap on a saved instance mesh — show its delete dialog.
+                                            ShowDeleteMeshDialog(i);
+                                            break;
+                                        }
                                     }
                                 }
                             }
                         }
-                        skipProductMeshTap: ;
                         else if (_searchResultsDialog != null && _searchResultsDialog.IsVisible)
                         {
                             // Tap missed the product box — check search results dialog
