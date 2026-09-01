@@ -1823,6 +1823,20 @@ namespace HololensIKEA
             _productInstances.Clear();
             _productDims = Vector3.Zero;
             _bookmarkLoadQueue.Clear();
+
+            // Dispose active product textures
+            _activeTextureSRV?.Dispose(); _activeTextureSRV = null;
+            _activeDispSRV?.Dispose();    _activeDispSRV = null;
+            _activeSideSRV?.Dispose();    _activeSideSRV = null;
+            
+            // Reset to input mode
+            appState = AppState.InputMode;
+            inputBuffer = "";
+            ShowBookmarksDialog();
+
+            Debug.WriteLine("[Multi] All products cleared");
+        }
+
         private void QueueBookmarkProductLoad(Bookmark bookmark)
         {
             if (bookmark == null || string.IsNullOrWhiteSpace(bookmark.Url))
@@ -1842,19 +1856,6 @@ namespace HololensIKEA
             inputBuffer = bookmark.Url;
             _pendingBookmarkGlbUrl = bookmark.GlbUrl;
             StartProductLoad();
-        }
-
-            // Dispose active product textures
-            _activeTextureSRV?.Dispose(); _activeTextureSRV = null;
-            _activeDispSRV?.Dispose();    _activeDispSRV = null;
-            _activeSideSRV?.Dispose();    _activeSideSRV = null;
-            
-            // Reset to input mode
-            appState = AppState.InputMode;
-            inputBuffer = "";
-            ShowBookmarksDialog();
-
-            Debug.WriteLine("[Multi] All products cleared");
         }
 
         // ── Bookmarks support ───────────────────────────────────────────────
