@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using HololensIKEA.Services;
 using Xunit;
 
@@ -45,6 +46,22 @@ namespace HololensIKEA.Tests
         public void FindModelUrl_MissingModel_ReturnsNull(string html)
         {
             Assert.Null(ModelService3D.FindModelUrl(html, new Uri("https://www.ikea.com/")));
+        }
+
+        [Fact]
+        public void ParseGlb_DecodedBillyModel_ReturnsShelfMesh()
+        {
+            var modelPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,
+                "../../../../../Models/50508652.glb"));
+
+            var mesh = ModelService3D.ParseGlb(File.ReadAllBytes(modelPath));
+
+            Assert.NotNull(mesh);
+            Assert.True(mesh.Positions.Length > 1000);
+            Assert.True(mesh.Indices.Length > 1000);
+            Assert.InRange(mesh.BoundsMeters.X, 0.5f, 2.0f);
+            Assert.InRange(mesh.BoundsMeters.Y, 1.0f, 3.0f);
+            Assert.InRange(mesh.BoundsMeters.Z, 0.1f, 1.0f);
         }
     }
 }

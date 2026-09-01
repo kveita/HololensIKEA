@@ -132,7 +132,7 @@ namespace HololensIKEA.Services
             return null;
         }
 
-        private static GltfMeshData ParseGlb(byte[] bytes)
+        public static GltfMeshData ParseGlb(byte[] bytes)
         {
             if (bytes == null || bytes.Length < 20) return null;
             using (var stream = new MemoryStream(bytes, false))

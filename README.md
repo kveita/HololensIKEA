@@ -4,7 +4,7 @@
 
 A native Direct3D 11 / UWP experiment for **Microsoft HoloLens 1**. It loads a curated set of public IKEA product 3D models and presents each as a movable, rotatable hologram.
 
-The project is inspired by [IKEA 3D Model Download Button](https://github.com/apinanaivot/IKEA-3D-Model-Download-Button). A weekly GitHub Actions job uses [Katana](https://github.com/projectdiscovery/katana) in headless-browser mode to visit public product pages and record the actual `.glb` request made by IKEA's client-side model viewer. The application downloads and parses those recorded GLB URLs locally.
+The project is inspired by [IKEA 3D Model Download Button](https://github.com/apinanaivot/IKEA-3D-Model-Download-Button). A weekly GitHub Actions job uses [Katana](https://github.com/projectdiscovery/katana) in headless-browser mode to visit public product pages and record the actual `.glb` request made by IKEA's client-side model viewer. IKEA serves these models with Draco compression, so the workflow decodes each model into a standard GLB in `Models/`; the application downloads those decoded meshes locally.
 
 ## Application workflow
 

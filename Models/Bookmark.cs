@@ -20,5 +20,8 @@ namespace HololensIKEA.Models
         /// HTML-scraping fallback in ModelService3D.
         /// </summary>
         public string GlbUrl { get; set; } = "";
+
+        /// <summary>Original IKEA GLB URL used by the bookmark-refresh workflow.</summary>
+        public string SourceGlbUrl { get; set; } = "";
     }
 }

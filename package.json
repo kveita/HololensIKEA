@@ -6,5 +6,8 @@
   "scripts": {
     "discover": "node scripts/discover-models.mjs"
   },
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "@gltf-transform/cli": "4.2.1"
+  }
 }

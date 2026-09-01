@@ -133,6 +133,7 @@ namespace HololensIKEA
         // Direct .glb URL from the selected bookmark, if resolved out-of-band
         // (bypasses the unreliable product-page scraping in ModelService3D).
         private string                         _pendingBookmarkGlbUrl;
+        private bool                           _activeProductRequiresMesh;
 
         // --- 3D mesh independent transform ---
         private Vector3    _meshPosition = new Vector3(0f, 0f, -2f);
@@ -917,7 +918,8 @@ namespace HololensIKEA
                     var product = pendingProductLoad.Result;
 
                     // ── Save current product as a frozen instance before overwriting ──
-                    if (_productDims.X > 0 && _productDims.Y > 0 && _productDims.Z > 0)
+                    if (_productDims.X > 0 && _productDims.Y > 0 && _productDims.Z > 0 &&
+                        (!_activeProductRequiresMesh || _activeMeshData != null))
                     {
                         var instance = new ProductInstance
                         {
@@ -940,6 +942,7 @@ namespace HololensIKEA
                         _activeDispSRV = null;
                         _activeSideSRV = null;
                         _activeMeshData = null;
+                        _activeProductRequiresMesh = false;
 
                         Debug.WriteLine("[Multi] Saved product instance #" + _productInstances.Count);
                     }
@@ -951,7 +954,7 @@ namespace HololensIKEA
 
                     // Reset active sprite textures for the new product (placeholder).
                     _activeTextureSRV?.Dispose();
-                    _activeTextureSRV = imageLoader.GetPlaceholder();
+                    _activeTextureSRV = null;
                     _activeDispSRV?.Dispose();
                     _activeDispSRV = null;
                     _activeSideSRV?.Dispose();
@@ -983,6 +986,7 @@ namespace HololensIKEA
                     // raw HTML for it often fails); fall back to page scraping otherwise.
                     _activeMeshData = null;
                     _pending3DModelLoad = null;
+                    _activeProductRequiresMesh = !string.IsNullOrEmpty(_pendingBookmarkGlbUrl);
                     if (!string.IsNullOrEmpty(_pendingBookmarkGlbUrl))
                     {
                         Debug.WriteLine("[IKEA] Fetching 3D model from bookmark GlbUrl " + _pendingBookmarkGlbUrl);
@@ -996,7 +1000,7 @@ namespace HololensIKEA
                     _pendingBookmarkGlbUrl = null;
 
                     // Start background image download + depth analysis.
-                    if (!string.IsNullOrEmpty(product.ImageUrl))
+                    if (!_activeProductRequiresMesh && !string.IsNullOrEmpty(product.ImageUrl))
                         StartImageLoad(product);
                 }
                 pendingProductLoad = null;
@@ -1259,7 +1263,7 @@ namespace HololensIKEA
                             }
 
                             // Render the active (most recent) product
-                            if (_activeMeshData == null)
+                            if (_activeMeshData == null && !_activeProductRequiresMesh)
                             {
                                 productBoxRenderer.SetPosition(_productPosition);
                                 productBoxRenderer.SetDimensions(_productDims.X, _productDims.Y, _productDims.Z);

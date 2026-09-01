@@ -24,8 +24,10 @@ import path from 'path';
 import { spawnSync } from 'child_process';
 
 const OUTPUT_FILE = 'bookmarks.json';
+const MODELS_DIRECTORY = 'Models';
 const LOCALE = 'us/en';
 const SEARCH_API = `https://sik.search.blue.cdtapps.com/${LOCALE}/search-result-page`;
+const DECODED_MODEL_BASE_URL = 'https://raw.githubusercontent.com/turbolego/HololensIKEA/main/Models';
 
 // Bookmarked products: a display name, the series name IKEA returns for a
 // matching search result, and a search query likely to surface a real,
@@ -132,6 +134,23 @@ function loadExistingBookmarks() {
     }
 }
 
+function decodeGlb(articleNumber, sourceUrl) {
+    const outputPath = path.join(MODELS_DIRECTORY, `${articleNumber}.glb`);
+    fs.mkdirSync(MODELS_DIRECTORY, { recursive: true });
+    const sourcePath = path.join(os.tmpdir(), `ikea-${articleNumber}.glb`);
+
+    try {
+        const download = spawnSync('curl', ['-fsSL', sourceUrl, '-o', sourcePath], { stdio: 'inherit', timeout: 60000 });
+        if (download.status !== 0) return null;
+
+        // Reading and writing with glTF Transform decodes KHR_draco_mesh_compression.
+        const convert = spawnSync('npx', ['--no-install', 'gltf-transform', 'copy', sourcePath, outputPath], { stdio: 'inherit', timeout: 120000 });
+        return convert.status === 0 ? `${DECODED_MODEL_BASE_URL}/${articleNumber}.glb` : null;
+    } finally {
+        fs.rmSync(sourcePath, { force: true });
+    }
+}
+
 async function discoverModels() {
     console.log(`Discovering ${PRODUCTS.length} bookmarked IKEA products...`);
 
@@ -150,14 +169,21 @@ async function discoverModels() {
         const glbUrl = findGlbUrlWithKatana(found.pipUrl);
 
         if (glbUrl) {
-            console.log(`[ok]   ${candidate.name}: ${found.pipUrl} -> ${glbUrl}`);
-            bookmark.glbUrl = glbUrl;
-            resolvedCount++;
+            const decodedUrl = decodeGlb(found.articleNumber, glbUrl);
+            if (decodedUrl) {
+                console.log(`[ok]   ${candidate.name}: ${found.pipUrl} -> ${decodedUrl}`);
+                bookmark.glbUrl = decodedUrl;
+                bookmark.sourceGlbUrl = glbUrl;
+                resolvedCount++;
+            } else {
+                console.warn(`[miss] ${candidate.name}: could not decode the discovered GLB`);
+            }
         } else {
             console.warn(`[miss] ${candidate.name}: found ${found.pipUrl} but katana observed no .glb request`);
             const existing = existingBookmarks.get(candidate.name);
             if (existing?.glbUrl) {
                 bookmark.glbUrl = existing.glbUrl;
+                bookmark.sourceGlbUrl = existing.sourceGlbUrl;
                 console.log(`[keep] ${candidate.name}: retaining last verified GLB URL`);
             }
         }
