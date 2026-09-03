@@ -48,20 +48,28 @@ namespace HololensIKEA.Services
                     client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 HoloLensIKEA/1.0");
                     client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml");
                     var pageUri = new Uri(productPageUrl, UriKind.Absolute);
+                    // Resolve the deterministic Rotera static URL before fetching the
+                    // HTML page. The product repository already fetched the page, and
+                    // this avoids another page request failing and leaving the app in
+                    // an empty 1 m placeholder state.
+                    var modelUrl = await FindRoteraModelUrlAsync(pageUri, client, ct);
+                    if (modelUrl != null)
+                        return await DownloadAndParseGlbAsync(modelUrl.ToString(), client, ct);
                     using (var request = new HttpRequestMessage(HttpMethod.Get, pageUri))
                     using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct))
                     {
                         response.EnsureSuccessStatusCode();
                         var html = await response.Content.ReadAsStringAsync();
-                        var modelUrl = FindModelUrl(html, pageUri);
+                        // IKEA's current Rotera URL is deterministic for a single-part
+                        // article number. Try it first so a client-side page response or
+                        // an empty API payload cannot leave the app showing a blank 1 m
+                        // placeholder while the model is actually available.
+                        modelUrl = await FindRoteraModelUrlAsync(pageUri, client, ct);
+                        if (modelUrl == null) modelUrl = FindModelUrl(html, pageUri);
                         if (modelUrl == null)
                         {
-                            modelUrl = await FindRoteraModelUrlAsync(pageUri, client, ct);
-                            if (modelUrl == null)
-                            {
-                                Debug.WriteLine("[IKEA] No GLB URL found in product page or Rotera API.");
-                                return null;
-                            }
+                            Debug.WriteLine("[IKEA] No GLB URL found in product page or Rotera API.");
+                            return null;
                         }
                         return await DownloadAndParseGlbAsync(modelUrl.ToString(), client, ct);
                     }
@@ -134,8 +142,18 @@ namespace HololensIKEA.Services
         {
             var match = Regex.Match(pageUri.AbsolutePath, @"^/([^/]+)/([^/]+)/p/[^/]*-(\d{8})/?$", RegexOptions.IgnoreCase);
             if (!match.Success) return null;
+            var articleNumber = match.Groups[3].Value;
+            var staticUrl = "https://web-api.ikea.com/" + match.Groups[1].Value + "/" +
+                match.Groups[2].Value + "/rotera/static/models/" + articleNumber + "-mini.glb";
+            using (var staticRequest = new HttpRequestMessage(HttpMethod.Head, staticUrl))
+            {
+                using (var staticResponse = await client.SendAsync(staticRequest, HttpCompletionOption.ResponseHeadersRead, ct))
+                {
+                    if (staticResponse.IsSuccessStatusCode) return new Uri(staticUrl);
+                }
+            }
             var endpoint = string.Format("https://web-api.ikea.com/{0}/{1}/rotera/data/model/{2}/",
-                match.Groups[1].Value, match.Groups[2].Value, match.Groups[3].Value);
+                match.Groups[1].Value, match.Groups[2].Value, articleNumber);
             using (var request = new HttpRequestMessage(HttpMethod.Get, endpoint))
             {
                 request.Headers.TryAddWithoutValidation("Accept", "application/json;version=2");
