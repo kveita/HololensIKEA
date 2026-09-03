@@ -26,21 +26,8 @@ const SEARCH_API = `https://sik.search.blue.cdtapps.com/${LOCALE}/search-result-
 const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36 HoloLensIKEA-Bookmarks/1.0';
 const ROTERA_CLIENT_ID = '4863e7d2-1428-4324-890b-ae5dede24fc6';
 
-// Bookmarked products: a display name, the series name IKEA returns for a
-// matching search result, and a search query likely to surface a real,
-// single-part (non-combination) product from that series.
-const PRODUCTS = [
-    { name: "BILLY Bookcase", series: "BILLY", query: "billy bookcase" },
-    { name: "KALLAX Shelf Unit", series: "KALLAX", query: "kallax shelf unit" },
-    { name: "HEMNES Bookcase", series: "HEMNES", query: "hemnes bookcase" },
-    { name: "BESTÅ Frame", series: "BESTÅ", query: "besta frame" },
-    { name: "IVAR Cabinet", series: "IVAR", query: "ivar cabinet" },
-    { name: "LACK Wall Shelf", series: "LACK", query: "lack wall shelf" },
-    { name: "TROFAST Frame", series: "TROFAST", query: "trofast frame" },
-    { name: "EKET Cabinet", series: "EKET", query: "eket cabinet" },
-    { name: "MALM Dressing Table", series: "MALM", query: "malm dressing table" },
-    { name: "BJÖRKSNÄS Nightstand", series: "BJÖRKSNÄS", query: "bjorksnas nightstand" },
-];
+const CRAWL_SEED = 'https://www.ikea.com/us/en/cat/products-products/';
+const MAX_NEW_BOOKMARKS = 25;
 
 /** Extracts the 8-digit article number from a single-part IKEA product page URL, or null. */
 function extractArticleNumber(pipUrl) {
@@ -136,6 +123,46 @@ function findGlbUrlWithKatana(pageUrl) {
     }
 }
 
+function crawlProductPages() {
+    const outFile = path.join(os.tmpdir(), `katana-products-${Date.now()}.jsonl`);
+    const args = [
+        '-u', CRAWL_SEED, '-headless', '-no-sandbox', '-disable-update-check',
+        '-depth', '2', '-page-load-strategy', 'domcontentloaded', '-dom-wait-time', '8',
+        '-jsonl', '-output', outFile, '-silent', '-timeout', '15', '-retry', '1',
+        '-H', `User-Agent: ${USER_AGENT}`,
+    ];
+    try {
+        const result = spawnSync('katana', args, { stdio: ['ignore', 'ignore', 'pipe'], timeout: 120000 });
+        if (result.error) {
+            console.warn(`  Katana product crawl failed: ${result.error.message}`);
+            return [];
+        }
+        if (!fs.existsSync(outFile)) return [];
+        const pages = new Set();
+        for (const line of fs.readFileSync(outFile, 'utf8').split('\n')) {
+            try {
+                const record = JSON.parse(line);
+                const values = [];
+                const visit = value => {
+                    if (typeof value === 'string') values.push(value);
+                    else if (Array.isArray(value)) value.forEach(visit);
+                    else if (value && typeof value === 'object') Object.values(value).forEach(visit);
+                };
+                visit(record);
+                for (const value of values) {
+                    const url = value.replace(/\\\//g, '/');
+                    if (/^https:\/\/www\.ikea\.com\/us\/en\/p\/[^?#]+-\d{8}\/?(?:[?#].*)?$/i.test(url)) {
+                        pages.add(url.split(/[?#]/)[0]);
+                    }
+                }
+            } catch { /* Ignore non-JSON output. */ }
+        }
+        return [...pages];
+    } finally {
+        fs.rmSync(outFile, { force: true });
+    }
+}
+
 function loadExistingBookmarks() {
     if (!fs.existsSync(OUTPUT_FILE)) return new Map();
 
@@ -171,38 +198,43 @@ async function findGlbUrlFromRotera(articleNumber) {
 }
 
 async function discoverModels() {
-    console.log(`Discovering ${PRODUCTS.length} bookmarked IKEA products...`);
-
     const existingBookmarks = loadExistingBookmarks();
     const bookmarks = [];
     let resolvedCount = 0;
+    const knownUrls = new Set();
+    const knownArticles = new Set();
 
-    for (const candidate of PRODUCTS) {
-        const found = await findProduct(candidate.series, candidate.query);
-        if (!found) {
-            console.warn(`[skip] ${candidate.name}: no single-part "${candidate.series}" product found for query "${candidate.query}"`);
-            continue;
-        }
-
-        const bookmark = { name: candidate.name, url: found.pipUrl };
-        let glbUrl = findGlbUrlWithKatana(found.pipUrl);
-        if (!glbUrl) {
-            // The viewer is now lazy-loaded and may not issue an XHR during a
-            // page crawl. Ask the same public Rotera API used by the viewer.
-            glbUrl = await findGlbUrlFromRotera(found.articleNumber);
-            if (glbUrl) console.log(`[fallback] ${candidate.name}: found GLB through IKEA Rotera API`);
-        }
-
+    console.log(`Phase 1: validating ${existingBookmarks.size} existing IKEA bookmarks...`);
+    for (const bookmark of existingBookmarks.values()) {
+        const articleNumber = extractArticleNumber(bookmark.url);
+        if (!articleNumber) continue;
+        knownUrls.add(bookmark.url.split(/[?#]/)[0]);
+        knownArticles.add(articleNumber);
+        const glbUrl = await findGlbUrlFromRotera(articleNumber);
         if (glbUrl) {
-            console.log(`[ok]   ${candidate.name}: ${found.pipUrl} has a 3D model`);
+            bookmarks.push({ name: bookmark.name, url: bookmark.url });
             resolvedCount++;
+            console.log(`[keep] ${bookmark.name}: existing bookmark has a GLB`);
         } else {
-            console.warn(`[miss] ${candidate.name}: no IKEA GLB was found`);
-            const existing = existingBookmarks.get(candidate.name);
-            if (!existing?.url) continue;
-            console.log(`[keep] ${candidate.name}: retaining page bookmark`);
+            console.warn(`[drop] ${bookmark.name}: existing bookmark no longer has a GLB`);
         }
-        bookmarks.push(bookmark);
+    }
+
+    console.log(`Phase 2: crawling IKEA for new product pages (skipping ${knownArticles.size} existing articles)...`);
+    for (const pageUrl of crawlProductPages()) {
+        const normalizedUrl = pageUrl.split(/[?#]/)[0];
+        const articleNumber = extractArticleNumber(normalizedUrl);
+        if (!articleNumber || knownUrls.has(normalizedUrl) || knownArticles.has(articleNumber)) continue;
+        const glbUrl = await findGlbUrlFromRotera(articleNumber);
+        if (!glbUrl) continue;
+        const slug = normalizedUrl.match(/\/p\/([^/]+)-\d{8}\/?$/i)?.[1] || articleNumber;
+        const name = slug.replace(/-/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+        bookmarks.push({ name, url: normalizedUrl });
+        knownUrls.add(normalizedUrl);
+        knownArticles.add(articleNumber);
+        resolvedCount++;
+        console.log(`[new]  ${name}: ${normalizedUrl}`);
+        if (bookmarks.length >= existingBookmarks.size + MAX_NEW_BOOKMARKS) break;
     }
 
     const outputPath = path.join(process.cwd(), OUTPUT_FILE);
@@ -211,7 +243,7 @@ async function discoverModels() {
     }
 
     fs.writeFileSync(outputPath, JSON.stringify(bookmarks, null, 2) + '\n');
-    console.log(`Saved ${bookmarks.length} bookmarks to ${outputPath} (${resolvedCount} with a verified 3D model).`);
+    console.log(`Saved ${bookmarks.length} page bookmarks (${resolvedCount} with a verified IKEA GLB).`);
 
     return bookmarks;
 }

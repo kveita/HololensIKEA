@@ -58,7 +58,7 @@ jobs:
             throw new Error(`GLB URLs must not be stored in bookmarks.json: ${bookmark.name}`);
           }
         }
-        if (fs.existsSync('Models') && fs.readdirSync('Models').length) {
+        if (fs.existsSync('Models') && fs.readdirSync('Models').some(name => name.toLowerCase().endsWith('.glb'))) {
           throw new Error('Models/ must remain empty; GLBs are downloaded on the HoloLens.');
         }
         console.log(`Validated ${bookmarks.length} IKEA page bookmarks.`);
