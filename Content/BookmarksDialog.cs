@@ -357,7 +357,7 @@ namespace HololensIKEA.Content
             var headerRect = new SharpDX.Mathematics.Interop.RawRectangleF(
                 20, 0, TEX_W - 90, HEADER_HEIGHT_PX);
             string headerText = _bookmarks.Count > 0
-                ? $"IKEA Products ({_bookmarks.Count})"
+                ? $"IKEA bookmarks ({_bookmarks.Count})"
                 : "No Bookmarks";
             _d2dTarget.DrawText(headerText, _headerFont, headerRect, _brushWhite);
 
