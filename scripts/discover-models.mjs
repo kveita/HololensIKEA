@@ -28,6 +28,7 @@ const MODELS_DIRECTORY = 'Models';
 const LOCALE = 'us/en';
 const SEARCH_API = `https://sik.search.blue.cdtapps.com/${LOCALE}/search-result-page`;
 const DECODED_MODEL_BASE_URL = 'https://raw.githubusercontent.com/turbolego/HololensIKEA/main/Models';
+const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36 HoloLensIKEA-Bookmarks/1.0';
 
 // Bookmarked products: a display name, the series name IKEA returns for a
 // matching search result, and a search query likely to surface a real,
@@ -53,8 +54,8 @@ function extractArticleNumber(pipUrl) {
 
 /** Searches IKEA's product search API and returns the first single-part match from the given series. */
 async function findProduct(series, query) {
-    const url = `${SEARCH_API}?q=${encodeURIComponent(query)}&size=10`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 HoloLensIKEA-Bookmarks/1.0' } });
+    const url = `${SEARCH_API}?q=${encodeURIComponent(query)}&size=50`;
+    const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
     if (!res.ok) {
         console.warn(`  Search request failed (HTTP ${res.status}) for query "${query}"`);
         return null;
@@ -73,52 +74,63 @@ async function findProduct(series, query) {
 }
 
 /**
- * Visits a product page with katana's headless crawler and returns the
- * first .glb URL observed in the page's network traffic, or null if none
- * was seen. Crawling is capped to a single page. The DOM-content-loaded
- * strategy waits for a bounded period of client-side rendering without using
- * crawl-duration, which prematurely cancels IKEA's async model request.
+ * Katana's XHR records have changed shape between releases (request.endpoint,
+ * request.url, and top-level url have all appeared). Enable XHR extraction and
+ * inspect every URL-valued field rather than depending on one record shape.
  */
+function glbUrlsInRecord(record) {
+    const urls = [];
+    const visit = value => {
+        if (typeof value === 'string') {
+            let decoded = value;
+            try { decoded = decodeURIComponent(value); } catch { /* keep original */ }
+            if (/https?:\/\/[^\s"']+\.glb(?:[?#]|$)/i.test(decoded)) urls.push(decoded);
+        } else if (Array.isArray(value)) value.forEach(visit);
+        else if (value && typeof value === 'object') Object.values(value).forEach(visit);
+    };
+    visit(record);
+    return [...new Set(urls)];
+}
+
 function findGlbUrlWithKatana(pageUrl) {
     const outFile = path.join(os.tmpdir(), `katana-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`);
     const args = [
         '-u', pageUrl,
-        '-headless', '-no-sandbox',
+        '-headless', '-no-sandbox', '-disable-update-check',
         '-depth', '1',
         '-page-load-strategy', 'domcontentloaded',
-        '-dom-wait-time', '10',
-        '-extension-match', 'glb',
-        '-jsonl',
-        '-output', outFile,
-        '-silent',
-        '-timeout', '20',
+        '-dom-wait-time', '15',
+        '-xhr',
+        '-jsonl', '-output', outFile, '-silent',
+        '-timeout', '30', '-retry', '2',
+        '-H', `User-Agent: ${USER_AGENT}`,
     ];
 
     // Note: -crawl-duration is intentionally not used here -- it was found to
     // cut the headless session short before the page's async .glb request
     // (fired by IKEA's model-viewer after load) had a chance to complete.
-    const result = spawnSync('katana', args, { stdio: 'ignore', timeout: 60000 });
+    const result = spawnSync('katana', args, { stdio: ['ignore', 'ignore', 'pipe'], timeout: 90000, encoding: 'utf8' });
     if (result.error) {
         console.warn(`  katana failed to run: ${result.error.message}`);
         return null;
     }
 
-    if (!fs.existsSync(outFile)) return null;
-    const content = fs.readFileSync(outFile, 'utf8');
-    fs.rmSync(outFile, { force: true });
-
-    for (const line of content.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-            const record = JSON.parse(trimmed);
-            const endpoint = record?.request?.endpoint;
-            if (endpoint && /\.glb(\?|$)/i.test(endpoint)) return endpoint;
-        } catch {
-            // Not a JSON line (e.g. a stray log line); ignore.
+    try {
+        if (!fs.existsSync(outFile)) return null;
+        const content = fs.readFileSync(outFile, 'utf8');
+        for (const line of content.split('\n')) {
+            if (!line.trim()) continue;
+            try {
+                const urls = glbUrlsInRecord(JSON.parse(line));
+                if (urls.length) return urls[0];
+            } catch {
+                // Ignore non-JSON diagnostics.
+            }
         }
+        return null;
+    } finally {
+        fs.rmSync(outFile, { force: true });
     }
-    return null;
 }
 
 function loadExistingBookmarks() {
@@ -188,11 +200,18 @@ async function discoverModels() {
             }
         }
 
+        // A page without a model is not useful to the HoloLens app. Keep the
+        // existing verified entry when discovery misses, but do not create a
+        // new page-only bookmark (for example, a discontinued KALLAX result).
+        if (!bookmark.glbUrl) {
+            console.warn(`[skip] ${candidate.name}: omitting bookmark because no GLB is available`);
+            continue;
+        }
         bookmarks.push(bookmark);
     }
 
     const outputPath = path.join(process.cwd(), OUTPUT_FILE);
-    if (resolvedCount === 0 && existingBookmarks.size === 0) {
+    if (bookmarks.length === 0) {
         throw new Error('Katana did not discover any GLB URLs and no verified bookmarks are available to preserve.');
     }
 

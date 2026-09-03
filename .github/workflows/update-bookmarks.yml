@@ -19,7 +19,7 @@ jobs:
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20'
+        node-version: '24'
     
     - name: Install dependencies
       run: npm install
@@ -43,6 +43,27 @@ jobs:
 
     - name: Generate bookmarks
       run: node scripts/discover-models.mjs
+
+    - name: Validate generated bookmarks
+      run: |
+        node --input-type=module <<'NODE'
+        import fs from 'node:fs';
+        const bookmarks = JSON.parse(fs.readFileSync('bookmarks.json', 'utf8'));
+        if (!bookmarks.length) throw new Error('No model bookmarks were generated');
+        for (const bookmark of bookmarks) {
+          if (!bookmark.name || !/^https:\/\/www\.ikea\.com\//.test(bookmark.url)) {
+            throw new Error(`Invalid IKEA bookmark: ${JSON.stringify(bookmark)}`);
+          }
+          const match = bookmark.glbUrl?.match(/(\d{8})\.glb$/);
+          if (!match || !bookmark.glbUrl.startsWith('https://raw.githubusercontent.com/turbolego/HololensIKEA/main/Models/')) {
+            throw new Error(`Invalid decoded GLB URL for ${bookmark.name}: ${bookmark.glbUrl}`);
+          }
+          if (!fs.existsSync(`Models/${match[1]}.glb`)) {
+            throw new Error(`Missing decoded model file for ${bookmark.name}`);
+          }
+        }
+        console.log(`Validated ${bookmarks.length} IKEA model bookmarks.`);
+        NODE
     
     - name: Commit and push changes
       run: |
