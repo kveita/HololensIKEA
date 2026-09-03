@@ -29,6 +29,7 @@ const LOCALE = 'us/en';
 const SEARCH_API = `https://sik.search.blue.cdtapps.com/${LOCALE}/search-result-page`;
 const DECODED_MODEL_BASE_URL = 'https://raw.githubusercontent.com/turbolego/HololensIKEA/main/Models';
 const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36 HoloLensIKEA-Bookmarks/1.0';
+const IKEA_STATIC_MODEL_BASE_URL = `https://web-api.ikea.com/${LOCALE}/rotera/static/models`;
 
 // Bookmarked products: a display name, the series name IKEA returns for a
 // matching search result, and a search query likely to surface a real,
@@ -163,6 +164,13 @@ function decodeGlb(articleNumber, sourceUrl) {
     }
 }
 
+// IKEA may defer the model-viewer request until the user clicks “View in 3D”.
+// The public static endpoint is deterministic for single-part products; use
+// it only after Katana misses and let the same download/decoder validate it.
+function staticModelUrl(articleNumber) {
+    return `${IKEA_STATIC_MODEL_BASE_URL}/${articleNumber}-mini.glb`;
+}
+
 async function discoverModels() {
     console.log(`Discovering ${PRODUCTS.length} bookmarked IKEA products...`);
 
@@ -178,7 +186,12 @@ async function discoverModels() {
         }
 
         const bookmark = { name: candidate.name, url: found.pipUrl };
-        const glbUrl = findGlbUrlWithKatana(found.pipUrl);
+        let glbUrl = findGlbUrlWithKatana(found.pipUrl);
+        if (!glbUrl) {
+            const fallbackUrl = staticModelUrl(found.articleNumber);
+            console.log(`[fallback] ${candidate.name}: validating IKEA static model endpoint`);
+            if (decodeGlb(found.articleNumber, fallbackUrl)) glbUrl = fallbackUrl;
+        }
 
         if (glbUrl) {
             const decodedUrl = decodeGlb(found.articleNumber, glbUrl);
