@@ -6,10 +6,6 @@
     "sourceGlbUrl": "https://web-api.ikea.com/us/en/rotera/static/models/50508652-mini.glb"
   },
   {
-    "name": "KALLAX Shelf Unit",
-    "url": "https://www.ikea.com/us/en/p/kallax-shelf-unit-white-20631663/"
-  },
-  {
     "name": "HEMNES Bookcase",
     "url": "https://www.ikea.com/us/en/p/hemnes-bookcase-white-stain-light-brown-60413502/",
     "glbUrl": "https://raw.githubusercontent.com/turbolego/HololensIKEA/main/Models/60413502.glb",
