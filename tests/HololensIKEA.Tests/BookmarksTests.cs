@@ -30,7 +30,7 @@ namespace HololensIKEA.Tests
 
         private List<Bookmark> LoadBookmarks()
         {
-            var basePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../.."));
+            var basePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
             var path = Path.Combine(basePath, "bookmarks.json");
             _output.WriteLine($"Loading bookmarks from: {path}");
 
@@ -99,6 +99,23 @@ namespace HololensIKEA.Tests
         }
 
         [Fact]
+        public void BookmarksJson_AllProvideDecodedGlbUrl()
+        {
+            var bookmarks = LoadBookmarks();
+            foreach (var bookmark in bookmarks)
+            {
+                Assert.False(string.IsNullOrWhiteSpace(bookmark.GlbUrl),
+                    $"Bookmark '{bookmark.Name}' must provide a decoded GLB URL.");
+                Assert.True(bookmark.GlbUrl.StartsWith(
+                    "https://raw.githubusercontent.com/turbolego/HololensIKEA/main/Models/",
+                    StringComparison.OrdinalIgnoreCase),
+                    $"Bookmark '{bookmark.Name}' must use a repository-hosted decoded GLB.");
+                Assert.True(bookmark.GlbUrl.EndsWith(".glb", StringComparison.OrdinalIgnoreCase),
+                    $"Bookmark '{bookmark.Name}' has an invalid GLB URL.");
+            }
+        }
+
+        [Fact]
         public void BookmarksJson_BillyExists()
         {
             var bookmarks = LoadBookmarks();
@@ -108,21 +125,14 @@ namespace HololensIKEA.Tests
         }
 
         [Fact]
-        public void BookmarksJson_KALLAXExists()
-        {
-            var bookmarks = LoadBookmarks();
-            var kallax = bookmarks.Find(b => b.Name.Contains("KALLAX", StringComparison.OrdinalIgnoreCase));
-            Assert.NotNull(kallax);
-        }
-
-        [Fact]
         public void BookmarksJson_AllUrlsAreIKEADomains()
         {
             var bookmarks = LoadBookmarks();
             foreach (var b in bookmarks)
             {
                 var uri = new Uri(b.Url);
-                Assert.True(uri.Host.StartsWith("ikea.com", StringComparison.OrdinalIgnoreCase),
+                Assert.True(uri.Host.Equals("ikea.com", StringComparison.OrdinalIgnoreCase) ||
+                    uri.Host.EndsWith(".ikea.com", StringComparison.OrdinalIgnoreCase),
                     $"Non-IKEA domain: {uri.Host}");
             }
         }

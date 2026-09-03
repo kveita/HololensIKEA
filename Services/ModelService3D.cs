@@ -35,7 +35,7 @@ namespace HololensIKEA.Services
             @"(?:src|gltf-model)\s*=\s*[""']([^""']*(?:\.glb|glb_draco)[^""']*)[""']",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex AbsoluteModelUrl = new Regex(
-            @"https?://[^""'<>\\s]+(?:\.glb|glb_draco)[^""'<>\\s]*",
+            @"https?://[^""'<>\s]+(?:\.glb|glb_draco)[^""'<>\s]*",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         public async Task<GltfMeshData> FetchModelAsync(string productPageUrl, CancellationToken ct)
@@ -133,7 +133,9 @@ namespace HololensIKEA.Services
             }
             if (string.IsNullOrEmpty(raw)) return null;
             raw = raw.Replace("\"\"", "\"").Replace("&#x2F;", "/");
-            if (Uri.TryCreate(raw, UriKind.Absolute, out var absolute)) return absolute;
+            if (Uri.TryCreate(raw, UriKind.Absolute, out var absolute) &&
+                (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps))
+                return absolute;
             if (Uri.TryCreate(pageUri, raw, out var relative)) return relative;
             return null;
         }

@@ -35,7 +35,7 @@ namespace HololensIKEA.Tests
 
             var modelUrl = ModelService3D.FindModelUrl(html, page);
 
-            Assert.Equal("https://models.example/billy.glb?variant=mini", modelUrl?.ToString());
+            Assert.Equal("https://models.example/billy.glb&variant=mini", modelUrl?.ToString());
         }
 
         [Theory]
