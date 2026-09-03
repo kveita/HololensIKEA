@@ -79,6 +79,13 @@ async function findProduct(series, query) {
  * request.url, and top-level url have all appeared). Enable XHR extraction and
  * inspect every URL-valued field rather than depending on one record shape.
  */
+function modelUrlFromValue(value) {
+    if (typeof value !== 'string' || !/^https?:\/\//i.test(value)) return null;
+    let decoded = value;
+    try { decoded = decodeURIComponent(value); } catch { /* keep original */ }
+    return /\.glb(?:[?#]|$)/i.test(decoded) ? decoded : null;
+}
+
 function glbUrlsInRecord(record) {
     const urls = [];
     const visit = value => {
@@ -175,7 +182,9 @@ async function findGlbUrlFromRotera(articleNumber) {
             },
         });
         if (!response.ok) return null;
-        const modelUrl = (await response.json())?.modelUrl;
+        const body = await response.text();
+        if (!body.trim()) return null;
+        const modelUrl = JSON.parse(body)?.modelUrl;
         return modelUrlFromValue(modelUrl);
     } catch (error) {
         console.warn(`  Rotera model lookup failed for ${articleNumber}: ${error.message}`);
