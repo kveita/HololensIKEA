@@ -49,7 +49,11 @@ namespace HololensIKEA.Services
                         HeightMeters = 1.0f,
                         DepthMeters = 1.0f,
                         ImageUrl = ExtractImageUrl(html),
-                        Has3DModel = ModelService3D.FindModelUrl(html, pageUri) != null,
+                        // IKEA now renders the viewer client-side. Product pages with
+                        // a single article number are eligible for runtime Rotera lookup
+                        // even when raw HTML has no GLB URL.
+                        Has3DModel = Regex.IsMatch(pageUri.AbsolutePath, @"/p/[^/]*-\d{8}/?$", RegexOptions.IgnoreCase) ||
+                                     ModelService3D.FindModelUrl(html, pageUri) != null,
                         ModelUrl = productPageUrl
                     };
                     cache[productPageUrl] = product;

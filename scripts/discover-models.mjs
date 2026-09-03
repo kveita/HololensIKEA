@@ -2,12 +2,9 @@
 //
 // Generates bookmarks.json for the HoloLens app by looking up each product
 // on IKEA's public search API, then using katana (https://github.com/projectdiscovery/katana)
-// in headless mode to discover its direct .glb 3D model URL, so the app
-// never has to scrape IKEA's product pages at runtime. IKEA renders its
-// "View in 3D" model-viewer client-side via JavaScript and fetches the
-// model over an XHR/fetch request as soon as the page loads, so a plain
-// HTML fetch can't see it -- but a headless browser crawl can observe that
-// network request directly, which is what katana's `-headless` mode does.
+// in headless mode to verify that each page exposes a 3D model. The generated
+// file intentionally contains only IKEA page bookmarks: GLBs are never
+// downloaded or stored in this repository and are fetched by the HoloLens.
 //
 // Search:  https://sik.search.blue.cdtapps.com/{locale}/search-result-page?q={query}
 //          Returns JSON with each match's real product-page URL (pipUrl),
@@ -24,10 +21,8 @@ import path from 'path';
 import { spawnSync } from 'child_process';
 
 const OUTPUT_FILE = 'bookmarks.json';
-const MODELS_DIRECTORY = 'Models';
 const LOCALE = 'us/en';
 const SEARCH_API = `https://sik.search.blue.cdtapps.com/${LOCALE}/search-result-page`;
-const DECODED_MODEL_BASE_URL = 'https://raw.githubusercontent.com/turbolego/HololensIKEA/main/Models';
 const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36 HoloLensIKEA-Bookmarks/1.0';
 const ROTERA_CLIENT_ID = '4863e7d2-1428-4324-890b-ae5dede24fc6';
 
@@ -146,28 +141,11 @@ function loadExistingBookmarks() {
 
     try {
         return new Map(JSON.parse(fs.readFileSync(OUTPUT_FILE, 'utf8'))
-            .filter(bookmark => bookmark?.name && bookmark?.glbUrl)
+            .filter(bookmark => bookmark?.name && bookmark?.url)
             .map(bookmark => [bookmark.name, bookmark]));
     } catch (error) {
         console.warn(`Could not read existing bookmarks: ${error.message}`);
         return new Map();
-    }
-}
-
-function decodeGlb(articleNumber, sourceUrl) {
-    const outputPath = path.join(MODELS_DIRECTORY, `${articleNumber}.glb`);
-    fs.mkdirSync(MODELS_DIRECTORY, { recursive: true });
-    const sourcePath = path.join(os.tmpdir(), `ikea-${articleNumber}.glb`);
-
-    try {
-        const download = spawnSync('curl', ['-fsSL', sourceUrl, '-o', sourcePath], { stdio: 'inherit', timeout: 60000 });
-        if (download.status !== 0) return null;
-
-        // Reading and writing with glTF Transform decodes KHR_draco_mesh_compression.
-        const convert = spawnSync('npx', ['--no-install', 'gltf-transform', 'copy', sourcePath, outputPath], { stdio: 'inherit', timeout: 120000 });
-        return convert.status === 0 ? `${DECODED_MODEL_BASE_URL}/${articleNumber}.glb` : null;
-    } finally {
-        fs.rmSync(sourcePath, { force: true });
     }
 }
 
@@ -216,38 +194,20 @@ async function discoverModels() {
         }
 
         if (glbUrl) {
-            const decodedUrl = decodeGlb(found.articleNumber, glbUrl);
-            if (decodedUrl) {
-                console.log(`[ok]   ${candidate.name}: ${found.pipUrl} -> ${decodedUrl}`);
-                bookmark.glbUrl = decodedUrl;
-                bookmark.sourceGlbUrl = glbUrl;
-                resolvedCount++;
-            } else {
-                console.warn(`[miss] ${candidate.name}: could not decode the discovered GLB`);
-            }
+            console.log(`[ok]   ${candidate.name}: ${found.pipUrl} has a 3D model`);
+            resolvedCount++;
         } else {
-            console.warn(`[miss] ${candidate.name}: found ${found.pipUrl} but katana observed no .glb request`);
+            console.warn(`[miss] ${candidate.name}: no IKEA GLB was found`);
             const existing = existingBookmarks.get(candidate.name);
-            if (existing?.glbUrl) {
-                bookmark.glbUrl = existing.glbUrl;
-                bookmark.sourceGlbUrl = existing.sourceGlbUrl;
-                console.log(`[keep] ${candidate.name}: retaining last verified GLB URL`);
-            }
-        }
-
-        // A page without a model is not useful to the HoloLens app. Keep the
-        // existing verified entry when discovery misses, but do not create a
-        // new page-only bookmark (for example, a discontinued KALLAX result).
-        if (!bookmark.glbUrl) {
-            console.warn(`[skip] ${candidate.name}: omitting bookmark because no GLB is available`);
-            continue;
+            if (!existing?.url) continue;
+            console.log(`[keep] ${candidate.name}: retaining page bookmark`);
         }
         bookmarks.push(bookmark);
     }
 
     const outputPath = path.join(process.cwd(), OUTPUT_FILE);
     if (bookmarks.length === 0) {
-        throw new Error('Katana did not discover any GLB URLs and no verified bookmarks are available to preserve.');
+        throw new Error('No IKEA product pages with 3D models were discovered.');
     }
 
     fs.writeFileSync(outputPath, JSON.stringify(bookmarks, null, 2) + '\n');

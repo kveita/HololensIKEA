@@ -54,15 +54,14 @@ jobs:
           if (!bookmark.name || !/^https:\/\/www\.ikea\.com\//.test(bookmark.url)) {
             throw new Error(`Invalid IKEA bookmark: ${JSON.stringify(bookmark)}`);
           }
-          const match = bookmark.glbUrl?.match(/(\d{8})\.glb$/);
-          if (!match || !bookmark.glbUrl.startsWith('https://raw.githubusercontent.com/turbolego/HololensIKEA/main/Models/')) {
-            throw new Error(`Invalid decoded GLB URL for ${bookmark.name}: ${bookmark.glbUrl}`);
-          }
-          if (!fs.existsSync(`Models/${match[1]}.glb`)) {
-            throw new Error(`Missing decoded model file for ${bookmark.name}`);
+          if (bookmark.glbUrl || bookmark.sourceGlbUrl) {
+            throw new Error(`GLB URLs must not be stored in bookmarks.json: ${bookmark.name}`);
           }
         }
-        console.log(`Validated ${bookmarks.length} IKEA model bookmarks.`);
+        if (fs.existsSync('Models') && fs.readdirSync('Models').length) {
+          throw new Error('Models/ must remain empty; GLBs are downloaded on the HoloLens.');
+        }
+        console.log(`Validated ${bookmarks.length} IKEA page bookmarks.`);
         NODE
     
     - name: Commit and push changes

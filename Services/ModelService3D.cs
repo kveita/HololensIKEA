@@ -56,14 +56,12 @@ namespace HololensIKEA.Services
                         var modelUrl = FindModelUrl(html, pageUri);
                         if (modelUrl == null)
                         {
-                            // IKEA renders the <model-viewer src="...glb"> element client-side
-                            // via JavaScript after the initial page load, so it is frequently
-                            // absent from the raw HTML this simple HTTP GET receives. Use
-                            // Bookmark.GlbUrl (resolved out-of-band, e.g. with
-                            // https://github.com/apinanaivot/IKEA-3D-Model-Download-Button
-                            // in a desktop browser) to bypass this scraping step entirely.
-                            Debug.WriteLine("[IKEA] No GLB URL found in product page HTML.");
-                            return null;
+                            modelUrl = await FindRoteraModelUrlAsync(pageUri, client, ct);
+                            if (modelUrl == null)
+                            {
+                                Debug.WriteLine("[IKEA] No GLB URL found in product page or Rotera API.");
+                                return null;
+                            }
                         }
                         return await DownloadAndParseGlbAsync(modelUrl.ToString(), client, ct);
                     }
@@ -130,6 +128,26 @@ namespace HololensIKEA.Services
             if (Uri.TryCreate(raw, UriKind.Absolute, out var absolute)) return absolute;
             if (Uri.TryCreate(pageUri, raw, out var relative)) return relative;
             return null;
+        }
+
+        private static async Task<Uri> FindRoteraModelUrlAsync(Uri pageUri, HttpClient client, CancellationToken ct)
+        {
+            var match = Regex.Match(pageUri.AbsolutePath, @"^/([^/]+)/([^/]+)/p/[^/]*-(\d{8})/?$", RegexOptions.IgnoreCase);
+            if (!match.Success) return null;
+            var endpoint = string.Format("https://web-api.ikea.com/{0}/{1}/rotera/data/model/{2}/",
+                match.Groups[1].Value, match.Groups[2].Value, match.Groups[3].Value);
+            using (var request = new HttpRequestMessage(HttpMethod.Get, endpoint))
+            {
+                request.Headers.TryAddWithoutValidation("Accept", "application/json;version=2");
+                request.Headers.TryAddWithoutValidation("x-client-id", "4863e7d2-1428-4324-890b-ae5dede24fc6");
+                using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct))
+                {
+                    if (!response.IsSuccessStatusCode) return null;
+                    var modelUrl = JObject.Parse(await response.Content.ReadAsStringAsync())["modelUrl"]?.ToString();
+                    return Uri.TryCreate(modelUrl, UriKind.Absolute, out var uri) &&
+                           Regex.IsMatch(uri.AbsoluteUri, @"\.glb(?:[?#]|$)", RegexOptions.IgnoreCase) ? uri : null;
+                }
+            }
         }
 
         public static GltfMeshData ParseGlb(byte[] bytes)
