@@ -48,17 +48,30 @@ namespace HololensIKEA.Content
         private SharpDX.Direct3D11.Buffer _modelCB;
 
         private ModelConstantBuffer       _cbData  = new ModelConstantBuffer { model = Matrix4x4.Identity };
-        private VertexPositionColor[]     _verts   = new VertexPositionColor[32];  // 16 handles + 4 button + 12 icon
+        private VertexPositionColor[]     _verts   = new VertexPositionColor[44];  // handles + trash + 3 command buttons
         private bool                      _usingVprt;
         private bool                      _loadingComplete;
         private bool                      _visible = true;
         private ManipulationZone          _currentZone = ManipulationZone.None;
         private bool                      _showTrashcan = false;       // true = gazed-on (for initial display)
         private bool                      _trashcanVisible = false;    // true = user toggled on, stays until tapped away
+        private bool                      _commandBarVisible = false;
 
         // World-space bounding box for trashcan hit-testing.
         public Vector3  TrashcanWorldPos   { get; private set; }
         public Vector3  TrashcanHalfExt    { get; private set; }
+        public Vector3[] CommandWorldPos { get; } = new Vector3[3];
+        public Vector3[] CommandHalfExt { get; } = new Vector3[3];
+        public bool CommandBarVisible
+        {
+            get => _commandBarVisible;
+            set
+            {
+                if (_commandBarVisible == value) return;
+                _commandBarVisible = value;
+                RebuildVertexColors();
+            }
+        }
 
         // ── Construction ─────────────────────────────────────────────────
 
@@ -129,11 +142,11 @@ namespace HololensIKEA.Content
         /// <summary>Draws the four handle quads, the trashcan button, and a simple trash can icon using instanced stereo (2 eyes).</summary>
         public void Render()
         {
-            if (!_loadingComplete || !_visible) return;
+            if (!_loadingComplete || (!_visible && !_commandBarVisible)) return;
 
             var ctx    = _dr.D3DDeviceContext;
             int stride = SharpDX.Utilities.SizeOf<VertexPositionColor>();
-            int indexCount = _showTrashcan || _trashcanVisible ? 48 : 24;
+            int indexCount = (_visible ? (_showTrashcan || _trashcanVisible ? 48 : 24) : 0) + (_commandBarVisible ? 18 : 0);
 
             ctx.InputAssembler.SetVertexBuffers(0, new VertexBufferBinding(_vb, stride, 0));
             ctx.InputAssembler.SetIndexBuffer(_ib, SharpDX.DXGI.Format.R16_UInt, 0);
@@ -215,6 +228,10 @@ namespace HololensIKEA.Content
                     24,26,27,  24,27,25,
                     // Trash can icon — handle (indices 42-47)
                     28,30,31,  28,31,29,
+                    // Command bar: Move, Rotate, Delete (indices 48-65)
+                    32,34,35, 32,35,33,
+                    36,38,39, 36,39,37,
+                    40,42,43, 40,43,41,
                 };
                 _ib = this.ToDispose(SharpDX.Direct3D11.Buffer.Create(device, BindFlags.IndexBuffer, indices));
 
@@ -311,6 +328,15 @@ namespace HololensIKEA.Content
             const float handleYTop = handleYBot + handleH;
             SetQuad(28, -handleW, handleYBot, handleW, handleYTop, iconZ);
 
+            // ── Dedicated command bar below the model ────────────────────
+            // Independent targets for Move, Rotate, and Delete. Keeping this
+            // bar below the model avoids the top-edge rotation conflict.
+            const float commandY0 = -0.78f;
+            const float commandY1 = -0.62f;
+            SetQuad(32, -0.48f, commandY0, -0.18f, commandY1, z);
+            SetQuad(36, -0.15f, commandY0,  0.15f, commandY1, z);
+            SetQuad(40,  0.18f, commandY0,  0.48f, commandY1, z);
+
             RebuildVertexColors();
         }
 
@@ -350,6 +376,15 @@ namespace HololensIKEA.Content
             for (int i = 24; i < 28; i++) _verts[i].color = iconColor;
             // Icon handle (verts 28-31)
             for (int i = 28; i < 32; i++) _verts[i].color = iconColor;
+
+            var commandColors = new[] {
+                new Vector3(0.20f, 0.55f, 1.00f), // Move
+                new Vector3(1.00f, 0.80f, 0.10f), // Rotate
+                new Vector3(1.00f, 0.20f, 0.10f), // Delete
+            };
+            for (int button = 0; button < 3; button++)
+                for (int i = 32 + button * 4; i < 36 + button * 4; i++)
+                    _verts[i].color = _commandBarVisible ? commandColors[button] : Vector3.Zero;
         }
 
         /// <summary>
@@ -382,6 +417,20 @@ namespace HololensIKEA.Content
                 Math.Abs(hx.X) + Math.Abs(hy.X) + Math.Abs(hz.X),
                 Math.Abs(hx.Y) + Math.Abs(hy.Y) + Math.Abs(hz.Y),
                 Math.Abs(hx.Z) + Math.Abs(hy.Z) + Math.Abs(hz.Z));
+
+            for (int button = 0; button < 3; button++)
+            {
+                float cx = -0.33f + button * 0.33f;
+                var centre = Vector3.Transform(new Vector3(cx, -0.70f, 0.52f), rotation) + position;
+                CommandWorldPos[button] = centre;
+                var bx = Vector3.Transform(Vector3.UnitX, rotation) * 0.15f * dims.X;
+                var by = Vector3.Transform(Vector3.UnitY, rotation) * 0.08f * dims.Y;
+                var bz = Vector3.Transform(Vector3.UnitZ, rotation) * 0.01f * dims.Z;
+                CommandHalfExt[button] = new Vector3(
+                    Math.Abs(bx.X) + Math.Abs(by.X) + Math.Abs(bz.X),
+                    Math.Abs(bx.Y) + Math.Abs(by.Y) + Math.Abs(bz.Y),
+                    Math.Abs(bx.Z) + Math.Abs(by.Z) + Math.Abs(bz.Z));
+            }
         }
 
         private static Vector3 ColorForHandle(bool active, bool isYAxis)

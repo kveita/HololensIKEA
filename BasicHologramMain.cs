@@ -132,6 +132,8 @@ namespace HololensIKEA
         private GltfMeshData                   _activeMeshData;
         private Task<GltfMeshData>             _pending3DModelLoad;
         private bool                           _activeProductRequiresMesh;
+        private enum ModelCommandMode { Direct, Move, Rotate }
+        private ModelCommandMode               _modelCommandMode = ModelCommandMode.Direct;
 
         // --- 3D mesh independent transform ---
         private Vector3    _meshPosition = new Vector3(0f, 0f, -2f);
@@ -562,6 +564,7 @@ namespace HololensIKEA
                     _gazeOnProduct = _activeMeshData == null && !_activeProductRequiresMesh &&
                         GazeHitsBox(gO, gD, activePosition, activeDimensions * 0.5f, 10f, out hd);
                     _manipulationHandles.IsVisible = _gazeOnMesh || _gazeOnProduct;
+                    _manipulationHandles.CommandBarVisible = _activeMeshData != null;
                     // Show trashcan only when gazing at a product that has a loaded 3D mesh.
                     // Trashcan stays visible once toggled on via double-tap (independent of gaze).
                     _manipulationHandles.ShowTrashcan = _gazeOnMesh;
@@ -582,8 +585,7 @@ namespace HololensIKEA
                     _manipulationHandles.SetHighlight(hz);
                     // Update trashcan world bounds for hit-testing.
                     // Must update even when not gazing (trashcan may be toggled on via double-tap).
-                    if ((_manipulationHandles.IsVisible || _manipulationHandles.TrashcanVisible)
-                        && _activeMeshData != null)
+                    if (_activeMeshData != null)
                     {
                         _manipulationHandles.UpdateTrashcanBounds(
                             activePosition, activeDimensions, activeRotation);
@@ -641,8 +643,29 @@ namespace HololensIKEA
                                        GazeHitsBox(rayOrigin, rayDir, _meshPosition,
                                        _meshDims * 0.5f, 10f, out meshHitDist);
 
-                        // Priority 1: trashcan hit → delete confirmation dialog.
-                        bool trashcanTapped = false;
+                        // Priority 1: dedicated command bar; it is independent of
+                        // the edge handles and remains visible below the mesh.
+                        bool commandTapped = false;
+                        if (_activeMeshData != null && _manipulationHandles.CommandBarVisible)
+                        {
+                            for (int command = 0; command < 3; command++)
+                            {
+                                float commandHitDist;
+                                if (!GazeHitsBox(rayOrigin, rayDir,
+                                    _manipulationHandles.CommandWorldPos[command],
+                                    _manipulationHandles.CommandHalfExt[command], 10f, out commandHitDist))
+                                    continue;
+                                if (command == 0) _modelCommandMode = ModelCommandMode.Move;
+                                else if (command == 1) _modelCommandMode = ModelCommandMode.Rotate;
+                                else ShowDeleteMeshDialog(-1);
+                                commandTapped = true;
+                                Debug.WriteLine("[Input] Command bar: " + (command == 0 ? "Move" : command == 1 ? "Rotate" : "Delete"));
+                                break;
+                            }
+                        }
+
+                        // Priority 2: legacy trashcan hit → delete confirmation dialog.
+                        bool trashcanTapped = commandTapped;
                         if (_manipulationHandles.ShowTrashcan && _activeMeshData != null)
                         {
                             float tcHitDist;
@@ -737,7 +760,9 @@ namespace HololensIKEA
                                     float nx = _meshDims.X > 0 ? localOff.X / (_meshDims.X * 0.5f) : 0;
                                     float ny = _meshDims.Y > 0 ? localOff.Y / (_meshDims.Y * 0.5f) : 0;
                                     const float edge = 0.62f;
-                                    bool inEdge = Math.Abs(nx) > edge || Math.Abs(ny) > edge;
+                                    bool inEdge = _modelCommandMode == ModelCommandMode.Rotate ||
+                                                  (_modelCommandMode != ModelCommandMode.Move &&
+                                                   (Math.Abs(nx) > edge || Math.Abs(ny) > edge));
 
                                     if (inEdge)
                                     {
@@ -747,6 +772,7 @@ namespace HololensIKEA
                                         _meshRotStartGazeDir = rayDir;
                                         _meshRotStartQuat    = _meshRotation;
                                         _isRotatingMesh      = true;
+                                        _modelCommandMode     = ModelCommandMode.Direct;
                                         Debug.WriteLine("[MeshRotate] Started axis=" +
                                             (_meshRotationAxis == Vector3.UnitY ? "Y" : "X"));
                                     }
@@ -767,6 +793,7 @@ namespace HololensIKEA
                                         }
                                         _meshDragGazeDistance = meshHitDist;
                                         _isDraggingMesh = true;
+                                        _modelCommandMode = ModelCommandMode.Direct;
                                         Debug.WriteLine("[MeshDrag] Started at dist=" + meshHitDist.ToString("F2"));
                                     }
                                 }
@@ -1055,6 +1082,7 @@ namespace HololensIKEA
                     // Reset rotation for the new product.
                     _productRotation = Quaternion.Identity;
                     _isRotating      = false;
+                    _modelCommandMode = ModelCommandMode.Direct;
                     productBoxRenderer.SetRotation(Quaternion.Identity);
                     productSpriteRenderer.SetRotation(Quaternion.Identity);
                     _manipulationHandles.SetHighlight(ManipulationZone.None);
@@ -1154,6 +1182,7 @@ namespace HololensIKEA
                     var activePosition = _activeMeshData != null ? _meshPosition : _productPosition;
                     var activeDimensions = _activeMeshData != null ? _meshDims : _productDims;
                     var activeRotation = _activeMeshData != null ? _meshRotation : _productRotation;
+                    _manipulationHandles.CommandBarVisible = _activeMeshData != null;
                     _manipulationHandles.SetTransform(activePosition, activeDimensions, activeRotation);
                     _manipulationHandles.Update();
                     // Update dimension labels to follow the visible product representation.
