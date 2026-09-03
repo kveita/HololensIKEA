@@ -370,3 +370,4 @@ FodyWeavers.xsd
 # Examples folder
 Windows-universal-samples-main/
 Windows-universal-samples-main.zip
+/EFObasenHololens-master/*
