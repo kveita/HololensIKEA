@@ -29,7 +29,7 @@ const LOCALE = 'us/en';
 const SEARCH_API = `https://sik.search.blue.cdtapps.com/${LOCALE}/search-result-page`;
 const DECODED_MODEL_BASE_URL = 'https://raw.githubusercontent.com/turbolego/HololensIKEA/main/Models';
 const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36 HoloLensIKEA-Bookmarks/1.0';
-const IKEA_STATIC_MODEL_BASE_URL = `https://web-api.ikea.com/${LOCALE}/rotera/static/models`;
+const ROTERA_CLIENT_ID = '4863e7d2-1428-4324-890b-ae5dede24fc6';
 
 // Bookmarked products: a display name, the series name IKEA returns for a
 // matching search result, and a search query likely to surface a real,
@@ -164,11 +164,23 @@ function decodeGlb(articleNumber, sourceUrl) {
     }
 }
 
-// IKEA may defer the model-viewer request until the user clicks “View in 3D”.
-// The public static endpoint is deterministic for single-part products; use
-// it only after Katana misses and let the same download/decoder validate it.
-function staticModelUrl(articleNumber) {
-    return `${IKEA_STATIC_MODEL_BASE_URL}/${articleNumber}-mini.glb`;
+async function findGlbUrlFromRotera(articleNumber) {
+    const endpoint = `https://web-api.ikea.com/${LOCALE}/rotera/data/model/${articleNumber}/`;
+    try {
+        const response = await fetch(endpoint, {
+            headers: {
+                Accept: 'application/json;version=2',
+                'x-client-id': ROTERA_CLIENT_ID,
+                'User-Agent': USER_AGENT,
+            },
+        });
+        if (!response.ok) return null;
+        const modelUrl = (await response.json())?.modelUrl;
+        return modelUrlFromValue(modelUrl);
+    } catch (error) {
+        console.warn(`  Rotera model lookup failed for ${articleNumber}: ${error.message}`);
+        return null;
+    }
 }
 
 async function discoverModels() {
@@ -188,9 +200,10 @@ async function discoverModels() {
         const bookmark = { name: candidate.name, url: found.pipUrl };
         let glbUrl = findGlbUrlWithKatana(found.pipUrl);
         if (!glbUrl) {
-            const fallbackUrl = staticModelUrl(found.articleNumber);
-            console.log(`[fallback] ${candidate.name}: validating IKEA static model endpoint`);
-            if (decodeGlb(found.articleNumber, fallbackUrl)) glbUrl = fallbackUrl;
+            // The viewer is now lazy-loaded and may not issue an XHR during a
+            // page crawl. Ask the same public Rotera API used by the viewer.
+            glbUrl = await findGlbUrlFromRotera(found.articleNumber);
+            if (glbUrl) console.log(`[fallback] ${candidate.name}: found GLB through IKEA Rotera API`);
         }
 
         if (glbUrl) {
