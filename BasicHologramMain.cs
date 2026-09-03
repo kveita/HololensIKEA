@@ -1980,7 +1980,8 @@ namespace HololensIKEA
             }
 
             var bookmarks = new List<HololensIKEA.Models.Bookmark>(_bookmarksService.Bookmarks);
-            ShowNativeBookmarksDialogAsync(bookmarks, 0);
+            _bookmarksDialog.Show(bookmarks);
+            Debug.WriteLine($"[Bookmarks] Showing {bookmarks.Count} bookmarks");
         }
 
         /// <summary>
@@ -1997,52 +1998,12 @@ namespace HololensIKEA
             var results = _bookmarksService.Search(query);
             if (results.Count > 0)
             {
-                ShowNativeBookmarksDialogAsync(results, 0, query);
+                _bookmarksDialog.Show(results);
+                Debug.WriteLine($"[Bookmarks] Showing {results.Count} results for '{query}'");
             }
             else
             {
                 Debug.WriteLine($"[Bookmarks] No results for '{query}'");
-            }
-        }
-
-        /// <summary>
-        /// Shows the bookmark picker using the native HoloLens/UWP dialog.
-        /// MessageDialog supports at most three commands, so two bookmarks plus
-        /// a More command are used per page.
-        /// </summary>
-        private async void ShowNativeBookmarksDialogAsync(
-            List<HololensIKEA.Models.Bookmark> bookmarks, int offset, string query = null)
-        {
-            if (bookmarks == null || offset < 0 || offset >= bookmarks.Count) return;
-            int count = Math.Min(2, bookmarks.Count - offset);
-            string title = string.IsNullOrWhiteSpace(query)
-                ? "IKEA bookmarks" : "IKEA bookmarks: " + query;
-            var dialog = new MessageDialog(
-                $"Select a bookmark ({offset + 1}-{offset + count} of {bookmarks.Count})", title);
-            for (int i = 0; i < count; i++)
-            {
-                var bookmark = bookmarks[offset + i];
-                dialog.Commands.Add(new UICommand(bookmark.Name,
-                    command => QueueBookmarkProductLoad(bookmark)));
-            }
-            if (offset + count < bookmarks.Count)
-            {
-                dialog.Commands.Add(new UICommand("More...",
-                    command => ShowNativeBookmarksDialogAsync(bookmarks, offset + count, query)));
-            }
-            else
-            {
-                dialog.Commands.Add(new UICommand("Close"));
-            }
-            dialog.DefaultCommandIndex = (uint)(dialog.Commands.Count - 1);
-            dialog.CancelCommandIndex = (uint)(dialog.Commands.Count - 1);
-            try
-            {
-                await dialog.ShowAsync();
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[Bookmarks] Native dialog error: {ex.Message}");
             }
         }
 
