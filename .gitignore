@@ -371,3 +371,4 @@ FodyWeavers.xsd
 Windows-universal-samples-main/
 Windows-universal-samples-main.zip
 /EFObasenHololens-master/*
+.DS_Store
