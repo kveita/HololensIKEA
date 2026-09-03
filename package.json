@@ -8,6 +8,6 @@
   },
   "type": "module",
   "devDependencies": {
-    "@gltf-transform/cli": "4.2.1"
+    "@gltf-transform/cli": "4.5.0"
   }
 }
