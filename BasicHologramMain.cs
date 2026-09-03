@@ -112,6 +112,7 @@ namespace HololensIKEA
         // --- Multi-product support ---
         private List<ProductInstance>      _productInstances = new List<ProductInstance>();
         private int                        _pendingProductElnummer = 0;  // elnummer being loaded
+        private RenderableProduct          _currentProduct = null;  // product being displayed (for mesh fallback)
 
         // --- Gaze state for handle visibility ---
         private bool                       _gazeOnProduct = false;
@@ -147,6 +148,7 @@ namespace HololensIKEA
         private Vector3    _meshRotStartGazeDir = Vector3.Zero;
         private Quaternion _meshRotStartQuat = Quaternion.Identity;
         private bool       _gazeOnMesh = false;
+        private bool       _meshLoadFailed = false;  // true when mesh download/parsing fails
 
         // --- Delete confirmation dialog state ---
         private bool                       _deleteDialogShowing = false;
@@ -1029,6 +1031,7 @@ namespace HololensIKEA
                 else
                 {
                     var product = pendingProductLoad.Result;
+                    _currentProduct = product;
 
                     // ── Save current product as a frozen instance before overwriting ──
                     if (_productDims.X > 0 && _productDims.Y > 0 && _productDims.Z > 0 &&
@@ -1098,8 +1101,14 @@ namespace HololensIKEA
                     // Resolve and download the GLB from the bookmarked IKEA page at runtime.
                     _activeMeshData = null;
                     _pending3DModelLoad = null;
-                    _activeProductRequiresMesh = product.Has3DModel;
-                    if (product.Has3DModel && !string.IsNullOrEmpty(product.ModelUrl))
+                    _meshLoadFailed = false;
+                    _activeProductRequiresMesh = !string.IsNullOrEmpty(_pendingBookmarkGlbUrl) || product.Has3DModel;
+                    if (!string.IsNullOrEmpty(_pendingBookmarkGlbUrl))
+                    {
+                        Debug.WriteLine("[IKEA] Fetching 3D model from bookmark GlbUrl " + _pendingBookmarkGlbUrl);
+                        _pending3DModelLoad = _modelService3D.FetchModelFromGlbUrlAsync(_pendingBookmarkGlbUrl, CancellationToken.None);
+                    }
+                    else if (product.Has3DModel && !string.IsNullOrEmpty(product.ModelUrl))
                     {
                         Debug.WriteLine("[IKEA] Fetching 3D model from product page " + product.ModelUrl);
                         _pending3DModelLoad = _modelService3D.FetchModelAsync(product.ModelUrl, CancellationToken.None);
@@ -1133,6 +1142,22 @@ namespace HololensIKEA
                 else if (_pending3DModelLoad.IsFaulted)
                 {
                     Debug.WriteLine("[IKEA] 3D model load failed: " + _pending3DModelLoad.Exception?.GetBaseException()?.Message);
+                    _meshLoadFailed = true;
+                    // Fall back: load the product image for the placeholder box
+                    if (_currentProduct != null && !string.IsNullOrEmpty(_currentProduct.ImageUrl))
+                    {
+                        StartImageLoad(_currentProduct);
+                    }
+                }
+                else
+                {
+                    // Task completed but result was null (e.g. GLB parsing failed)
+                    Debug.WriteLine("[IKEA] 3D model load returned null (parsing failed or no mesh)");
+                    _meshLoadFailed = true;
+                    if (_currentProduct != null && !string.IsNullOrEmpty(_currentProduct.ImageUrl))
+                    {
+                        StartImageLoad(_currentProduct);
+                    }
                 }
                 _pending3DModelLoad = null;
                 StartNextBookmarkLoad();
@@ -1371,7 +1396,10 @@ namespace HololensIKEA
                             }
 
                             // Render the active (most recent) product
-                            if (_activeMeshData == null && !_activeProductRequiresMesh)
+                            // Always show the placeholder box as a fallback while the
+                            // 3D mesh loads, or if the mesh never arrives. The mesh
+                            // replaces the box once _activeMeshData is set.
+                            if (_activeMeshData == null)
                             {
                                 productBoxRenderer.SetPosition(_productPosition);
                                 productBoxRenderer.SetDimensions(_productDims.X, _productDims.Y, _productDims.Z);
@@ -1935,6 +1963,8 @@ namespace HololensIKEA
             _productInstances.Clear();
             _productDims = Vector3.Zero;
             _bookmarkLoadQueue.Clear();
+            _currentProduct = null;
+            _meshLoadFailed = false;
 
             // Dispose active product textures
             _activeTextureSRV?.Dispose(); _activeTextureSRV = null;
