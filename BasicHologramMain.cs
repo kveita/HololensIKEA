@@ -112,6 +112,7 @@ namespace HololensIKEA
         // --- Multi-product support ---
         private List<ProductInstance>      _productInstances = new List<ProductInstance>();
         private int                        _pendingProductElnummer = 0;  // elnummer being loaded
+        private string                     _pendingBookmarkGlbUrl = "";  // glbUrl from bookmark, if any
         private RenderableProduct          _currentProduct = null;  // product being displayed (for mesh fallback)
 
         // --- Gaze state for handle visibility ---
@@ -1965,6 +1966,7 @@ namespace HololensIKEA
             _bookmarkLoadQueue.Clear();
             _currentProduct = null;
             _meshLoadFailed = false;
+            _pendingBookmarkGlbUrl = "";
 
             // Dispose active product textures
             _activeTextureSRV?.Dispose(); _activeTextureSRV = null;
@@ -1995,6 +1997,7 @@ namespace HololensIKEA
                 return;
 
             var bookmark = _bookmarkLoadQueue.Dequeue();
+            _pendingBookmarkGlbUrl = bookmark.GlbUrl ?? "";
             inputBuffer = bookmark.Url;
             StartProductLoad();
         }
