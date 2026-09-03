@@ -197,6 +197,20 @@ async function findGlbUrlFromRotera(articleNumber) {
     }
 }
 
+async function mapWithConcurrency(items, concurrency, worker) {
+    const results = new Array(items.length);
+    let next = 0;
+    async function consume() {
+        while (true) {
+            const index = next++;
+            if (index >= items.length) return;
+            results[index] = await worker(items[index], index);
+        }
+    }
+    await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, consume));
+    return results;
+}
+
 async function discoverModels() {
     const existingBookmarks = loadExistingBookmarks();
     const bookmarks = [];
@@ -205,28 +219,40 @@ async function discoverModels() {
     const knownArticles = new Set();
 
     console.log(`Phase 1: validating ${existingBookmarks.size} existing IKEA bookmarks...`);
-    for (const bookmark of existingBookmarks.values()) {
+    const existingResults = await mapWithConcurrency([...existingBookmarks.values()], 8, async bookmark => {
         const articleNumber = extractArticleNumber(bookmark.url);
-        if (!articleNumber) continue;
-        knownUrls.add(bookmark.url.split(/[?#]/)[0]);
-        knownArticles.add(articleNumber);
+        if (!articleNumber) return { bookmark, articleNumber: null, glbUrl: null };
         const glbUrl = await findGlbUrlFromRotera(articleNumber);
-        if (glbUrl) {
-            bookmarks.push({ name: bookmark.name, url: bookmark.url });
+        return { bookmark, articleNumber, glbUrl };
+    });
+    for (const result of existingResults) {
+        if (!result.articleNumber) continue;
+        knownUrls.add(result.bookmark.url.split(/[?#]/)[0]);
+        knownArticles.add(result.articleNumber);
+        if (result.glbUrl) {
+            bookmarks.push({ name: result.bookmark.name, url: result.bookmark.url });
             resolvedCount++;
-            console.log(`[keep] ${bookmark.name}: existing bookmark has a GLB`);
-        } else {
-            console.warn(`[drop] ${bookmark.name}: existing bookmark no longer has a GLB`);
-        }
+            console.log(`[keep] ${result.bookmark.name}: existing ID ${result.articleNumber} has a GLB`);
+        } else console.warn(`[drop] ${result.bookmark.name}: ID ${result.articleNumber} has no GLB`);
     }
 
     console.log(`Phase 2: crawling IKEA for new product pages (skipping ${knownArticles.size} existing articles)...`);
-    for (const pageUrl of crawlProductPages()) {
-        const normalizedUrl = pageUrl.split(/[?#]/)[0];
-        const articleNumber = extractArticleNumber(normalizedUrl);
-        if (!articleNumber || knownUrls.has(normalizedUrl) || knownArticles.has(articleNumber)) continue;
-        const glbUrl = await findGlbUrlFromRotera(articleNumber);
-        if (!glbUrl) continue;
+    const candidatesByArticle = new Map(crawlProductPages().map(url => ({
+        url: url.split(/[?#]/)[0],
+        articleNumber: extractArticleNumber(url),
+    })).filter(candidate => candidate.articleNumber &&
+        !knownUrls.has(candidate.url) && !knownArticles.has(candidate.articleNumber))
+        .map(candidate => [candidate.articleNumber, candidate]));
+    const candidates = [...candidatesByArticle.values()];
+    console.log(`Found ${candidates.length} new candidate IKEA article IDs; validating in parallel...`);
+    const newResults = await mapWithConcurrency(candidates, 8, async candidate => ({
+        ...candidate,
+        glbUrl: await findGlbUrlFromRotera(candidate.articleNumber),
+    }));
+    for (const candidate of newResults) {
+        if (!candidate.glbUrl) continue;
+        const normalizedUrl = candidate.url;
+        const articleNumber = candidate.articleNumber;
         const slug = normalizedUrl.match(/\/p\/([^/]+)-\d{8}\/?$/i)?.[1] || articleNumber;
         const name = slug.replace(/-/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
         bookmarks.push({ name, url: normalizedUrl });
