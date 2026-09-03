@@ -8,7 +8,6 @@ on:
       tag:
         description: "Release tag (example: v1.0.1.0)"
         required: false
-        type: string
 
 jobs:
   release:
