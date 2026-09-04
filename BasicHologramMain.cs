@@ -112,7 +112,6 @@ namespace HololensIKEA
         // --- Multi-product support ---
         private List<ProductInstance>      _productInstances = new List<ProductInstance>();
         private int                        _pendingProductElnummer = 0;  // elnummer being loaded
-        private string                     _pendingBookmarkGlbUrl = "";  // glbUrl from bookmark, if any
         private RenderableProduct          _currentProduct = null;  // product being displayed (for mesh fallback)
 
         // --- Gaze state for handle visibility ---
@@ -1103,13 +1102,8 @@ namespace HololensIKEA
                     _activeMeshData = null;
                     _pending3DModelLoad = null;
                     _meshLoadFailed = false;
-                    _activeProductRequiresMesh = !string.IsNullOrEmpty(_pendingBookmarkGlbUrl) || product.Has3DModel;
-                    if (!string.IsNullOrEmpty(_pendingBookmarkGlbUrl))
-                    {
-                        Debug.WriteLine("[IKEA] Fetching 3D model from bookmark GlbUrl " + _pendingBookmarkGlbUrl);
-                        _pending3DModelLoad = _modelService3D.FetchModelFromGlbUrlAsync(_pendingBookmarkGlbUrl, CancellationToken.None);
-                    }
-                    else if (product.Has3DModel && !string.IsNullOrEmpty(product.ModelUrl))
+                    _activeProductRequiresMesh = product.Has3DModel;
+                    if (product.Has3DModel && !string.IsNullOrEmpty(product.ModelUrl))
                     {
                         Debug.WriteLine("[IKEA] Fetching 3D model from product page " + product.ModelUrl);
                         _pending3DModelLoad = _modelService3D.FetchModelAsync(product.ModelUrl, CancellationToken.None);
@@ -1966,7 +1960,6 @@ namespace HololensIKEA
             _bookmarkLoadQueue.Clear();
             _currentProduct = null;
             _meshLoadFailed = false;
-            _pendingBookmarkGlbUrl = "";
 
             // Dispose active product textures
             _activeTextureSRV?.Dispose(); _activeTextureSRV = null;
@@ -1997,7 +1990,6 @@ namespace HololensIKEA
                 return;
 
             var bookmark = _bookmarkLoadQueue.Dequeue();
-            _pendingBookmarkGlbUrl = bookmark.GlbUrl ?? "";
             inputBuffer = bookmark.Url;
             StartProductLoad();
         }
