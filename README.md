@@ -30,7 +30,7 @@ When a bookmark is selected, the HoloLens downloads and processes the model duri
 1. The app extracts the eight-digit IKEA article number from the bookmark URL.
 2. `ModelService3D` resolves IKEA's Rotera static model URL, for example `50508652-mini.glb`.
 3. The app downloads the GLB over HTTPS directly from IKEA.
-4. The GLB v2 payload is parsed on the device.
+4. The GLB v2 payload is parsed on the device. IKEA's current models use `KHR_draco_mesh_compression`; the packaged x86 Draco decoder expands the compressed primitive in memory.
 5. The resulting mesh is normalized, uploaded to Direct3D, and placed in the scene.
 
 The product page and Rotera API are fallback discovery paths when the deterministic static URL is not available. The app does not download models during the repository update workflow, and it does not commit or package downloaded models. A temporary device-local cache may be added later, but any such cache must remain outside the repository and AppX package.
@@ -56,10 +56,12 @@ The workflow writes page-only entries to `bookmarks.json`. It must never downloa
 | `Models/Bookmark.cs` | Page-only IKEA bookmark metadata. |
 | `Models/ProductInstance.cs` | State for saved model instances, including decoded runtime mesh data. |
 | `Services/ProductServices.cs` | IKEA product-page loading and renderable product metadata creation. |
-| `Services/ModelService3D.cs` | Runtime IKEA URL resolution, HTTPS GLB download, binary GLB parsing, and mesh normalization. |
+| `Services/ModelService3D.cs` | Runtime IKEA URL resolution, HTTPS GLB download, binary GLB parsing, Draco primitive dispatch, and mesh normalization. |
+| `Services/DracoDecoder.cs` | HoloLens x86 binding for decoding `KHR_draco_mesh_compression` primitives in memory. |
 | `Services/BookmarkVoiceCommandResolver.cs` | Exact first-word bookmark aliases used by voice commands. |
 | `Content/GltfMeshRenderer.cs` | Direct3D 11 mesh upload and holographic rendering. |
 | `Content/ProductManipulationHandles.cs` | Gaze-sensitive move/rotate handles and the separate Move/Rotate/Delete command bar. |
+| `Native/x86/draco_tiny_dec.dll` | MIT-licensed native Draco decoder required by the HoloLens x86 runtime; it contains no IKEA model data. |
 | `Content/BookmarksDialog.cs` | Movable in-app IKEA bookmarks panel. |
 | `HololensIKEA.csproj` | UWP project configured for HoloLens 1 and x86 packaging. |
 | `.github/workflows/update-bookmarks.yml` | Scheduled and manual page-only bookmark discovery and validation. |
@@ -132,7 +134,7 @@ The app manifest uses the HoloLens 1-compatible `Windows.Universal` target famil
 
 ## Implementation notes
 
-The GLB parser handles the standard GLB v2 header, JSON chunk, binary chunk, position and normal accessors, and unsigned byte/short/int triangle indices. Models are centered around their bounding-box center. Implausibly large coordinate ranges are treated as millimetres and converted to metres; normal IKEA GLB exports are otherwise retained in metres. The renderer uses the existing lightweight HoloLens shader path and bakes simple directional lighting from vertex normals, avoiding a Unity or runtime-engine dependency.
+The GLB parser handles the standard GLB v2 header, JSON chunk, binary chunk, position and normal accessors, unsigned byte/short/int triangle indices, and IKEA's `KHR_draco_mesh_compression` primitives. Draco geometry is decoded in memory on the HoloLens; the downloaded GLB is never written into the repository or AppX as an IKEA asset. Models are centered around their bounding-box center. Implausibly large coordinate ranges are treated as millimetres and converted to metres; normal IKEA GLB exports are otherwise retained in metres. The renderer uses the existing lightweight HoloLens shader path and bakes simple directional lighting from vertex normals, avoiding a Unity or runtime-engine dependency.
 
 The app intentionally keeps the default product dimensions at 1 metre while a bookmark model is loading, but it does not treat that placeholder as the downloaded model. If runtime download or parsing fails, diagnostics are written to the debug output and the fallback behavior is used rather than claiming that a GLB was bundled.
 
