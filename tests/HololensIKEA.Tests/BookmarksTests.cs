@@ -107,9 +107,9 @@ namespace HololensIKEA.Tests
                 Assert.False(string.IsNullOrWhiteSpace(bookmark.GlbUrl),
                     $"Bookmark '{bookmark.Name}' must provide a decoded GLB URL.");
                 Assert.True(bookmark.GlbUrl.StartsWith(
-                    "https://raw.githubusercontent.com/turbolego/HololensIKEA/main/Models/",
+                    "https://web-api.ikea.com/",
                     StringComparison.OrdinalIgnoreCase),
-                    $"Bookmark '{bookmark.Name}' must use a repository-hosted decoded GLB.");
+                    $"Bookmark '{bookmark.Name}' must use a Rotera CDN GLB URL.");
                 Assert.True(bookmark.GlbUrl.EndsWith(".glb", StringComparison.OrdinalIgnoreCase),
                     $"Bookmark '{bookmark.Name}' has an invalid GLB URL.");
             }

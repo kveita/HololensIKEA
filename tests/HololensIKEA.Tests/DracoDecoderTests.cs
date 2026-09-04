@@ -161,7 +161,7 @@ namespace HololensIKEA.Tests
 
             Assert.NotNull(result);
             Assert.Equal(3, result.Positions.Length);
-            Assert.Equal(3, result.Indices.Length / 3); // 3 indices = 1 triangle
+            Assert.Equal(1, result.Indices.Length / 3); // 3 indices = 1 triangle
             // Positions should be centered around origin
             Assert.True(result.BoundsMeters.Length() > 0);
         }
