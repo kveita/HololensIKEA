@@ -1,0 +1,35 @@
+# Runs the xunit test suite on every push and PR to main.
+# The test project targets net8.0 (pure C#, no UWP deps) and can run
+# on any platform.  Network-dependent integration tests are excluded
+# by default via their [Fact(Skip = ...)] attribute.
+
+name: Tests
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 8.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore tests/HololensIKEA.Tests/HololensIKEA.Tests.csproj
+
+      - name: Build
+        run: dotnet build tests/HololensIKEA.Tests/HololensIKEA.Tests.csproj --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test tests/HololensIKEA.Tests/HololensIKEA.Tests.csproj --no-build --configuration Release --logger "trx;LogFileName=results.trx" --verbosity normal
