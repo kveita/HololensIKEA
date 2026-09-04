@@ -25,6 +25,8 @@
     <Compile Include="../../Services/ProductServices.cs" Link="Services/ProductServices.cs" />
     <Compile Include="../../Services/ModelService3D.cs" Link="Services/ModelService3D.cs" />
     <Compile Include="../../Services/DracoDecoder.cs" Link="Services/DracoDecoder.cs" />
+    <Compile Include="../../Services/ProductDepthAnalyzer.cs" Link="Services/ProductDepthAnalyzer.cs" />
+    <Compile Include="../../Services/ProductFaceTextureBuilder.cs" Link="Services/ProductFaceTextureBuilder.cs" />
   </ItemGroup>
 
 </Project>
