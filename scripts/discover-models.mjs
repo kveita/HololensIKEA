@@ -230,7 +230,7 @@ async function discoverModels() {
         knownUrls.add(result.bookmark.url.split(/[?#]/)[0]);
         knownArticles.add(result.articleNumber);
         if (result.glbUrl) {
-            bookmarks.push({ name: result.bookmark.name, url: result.bookmark.url });
+            bookmarks.push({ name: result.bookmark.name, url: result.bookmark.url, glbUrl: result.glbUrl, sourceGlbUrl: result.glbUrl });
             resolvedCount++;
             console.log(`[keep] ${result.bookmark.name}: existing ID ${result.articleNumber} has a GLB`);
         } else console.warn(`[drop] ${result.bookmark.name}: ID ${result.articleNumber} has no GLB`);
@@ -255,7 +255,7 @@ async function discoverModels() {
         const articleNumber = candidate.articleNumber;
         const slug = normalizedUrl.match(/\/p\/([^/]+)-\d{8}\/?$/i)?.[1] || articleNumber;
         const name = slug.replace(/-/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
-        bookmarks.push({ name, url: normalizedUrl });
+        bookmarks.push({ name, url: normalizedUrl, glbUrl: candidate.glbUrl, sourceGlbUrl: candidate.glbUrl });
         knownUrls.add(normalizedUrl);
         knownArticles.add(articleNumber);
         resolvedCount++;

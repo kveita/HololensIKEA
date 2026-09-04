@@ -21,9 +21,13 @@ IKEA 3D models **must not be bundled with this application**. The repository and
 ```json
 {
   "name": "BILLY Bookcase",
-  "url": "https://www.ikea.com/us/en/p/billy-bookcase-brown-walnut-effect-50508652/"
+  "url": "https://www.ikea.com/us/en/p/billy-bookcase-brown-walnut-effect-50508652/",
+  "glbUrl": "https://web-api.ikea.com/us/en/rotera/static/models/50508652-mini.glb",
+  "sourceGlbUrl": "https://web-api.ikea.com/us/en/rotera/static/models/50508652-mini.glb"
 }
 ```
+
+The `glbUrl` and `sourceGlbUrl` fields store the deterministic Rotera CDN URL for the product's Draco-compressed GLB, allowing the app to skip the product-page scraping step and load the model directly.
 
 When a bookmark is selected, the HoloLens downloads and processes the model during the app session:
 
@@ -46,7 +50,7 @@ The workflow is intentionally divided into two phases:
 1. Validate existing page bookmarks first, preserving valid entries and skipping them during discovery.
 2. Crawl for new IKEA product pages, deduplicate article numbers, and probe only new candidates with bounded concurrency.
 
-The workflow writes page-only entries to `bookmarks.json`. It must never download, decode, commit, or package IKEA `.glb` files. CI validation fails if a bookmark contains legacy `glbUrl` or `sourceGlbUrl` fields or if a `.glb` file appears under `Models/`.
+The workflow writes `glbUrl` and `sourceGlbUrl` alongside each bookmark when the Rotera API returns a valid model URL. It must never download, decode, commit, or package IKEA `.glb` files. CI validation fails if a `.glb` file appears under `Models/`.
 
 ## Repository structure
 
