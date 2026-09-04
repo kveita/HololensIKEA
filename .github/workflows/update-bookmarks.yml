@@ -54,8 +54,13 @@ jobs:
           if (!bookmark.name || !/^https:\/\/www\.ikea\.com\//.test(bookmark.url)) {
             throw new Error(`Invalid IKEA bookmark: ${JSON.stringify(bookmark)}`);
           }
-          if (bookmark.glbUrl || bookmark.sourceGlbUrl) {
-            throw new Error(`GLB URLs must not be stored in bookmarks.json: ${bookmark.name}`);
+          if (bookmark.glbUrl) {
+            if (!/^https:\/\/web-api\.ikea\.com\//.test(bookmark.glbUrl)) {
+              throw new Error(`GLB URL must be a valid Rotera CDN URL: ${bookmark.glbUrl}`);
+            }
+            if (!bookmark.glbUrl.endsWith('.glb')) {
+              throw new Error(`GLB URL must end with .glb: ${bookmark.glbUrl}`);
+            }
           }
         }
         if (fs.existsSync('Models') && fs.readdirSync('Models').some(name => name.toLowerCase().endsWith('.glb'))) {
