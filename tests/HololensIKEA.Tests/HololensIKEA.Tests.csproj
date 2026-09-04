@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
     <PackageReference Include="xunit" Version="2.6.6" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.6" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
@@ -24,6 +25,7 @@
     <Compile Include="../../Services/BookmarkVoiceCommandResolver.cs" Link="Services/BookmarkVoiceCommandResolver.cs" />
     <Compile Include="../../Services/ProductServices.cs" Link="Services/ProductServices.cs" />
     <Compile Include="../../Services/ModelService3D.cs" Link="Services/ModelService3D.cs" />
+    <Compile Include="../../Services/DracoDecoder.cs" Link="Services/DracoDecoder.cs" />
   </ItemGroup>
 
 </Project>
