@@ -24,6 +24,7 @@
     <Compile Include="../../Services/BookmarkVoiceCommandResolver.cs" Link="Services/BookmarkVoiceCommandResolver.cs" />
     <Compile Include="../../Services/ProductServices.cs" Link="Services/ProductServices.cs" />
     <Compile Include="../../Services/ModelService3D.cs" Link="Services/ModelService3D.cs" />
+    <Compile Include="../../Services/DracoDecoder.cs" Link="Services/DracoDecoder.cs" />
   </ItemGroup>
 
 </Project>
