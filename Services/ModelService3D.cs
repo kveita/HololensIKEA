@@ -206,6 +206,35 @@ namespace HololensIKEA.Services
             {
                 foreach (var primitive in ((IEnumerable)(mesh["primitives"] as JArray ?? new JArray())).Cast<JObject>())
                 {
+                    var draco = primitive["extensions"]?["KHR_draco_mesh_compression"] as JObject;
+                    if (draco != null)
+                    {
+                        var dracoViewIndex = draco["bufferView"]?.Value<int>() ?? -1;
+                        if (dracoViewIndex < 0 || dracoViewIndex >= views.Count)
+                        {
+                            Debug.WriteLine("[IKEA] Draco primitive has no valid bufferView.");
+                            return null;
+                        }
+                        var dracoView = views[dracoViewIndex];
+                        var dracoStart = dracoView["byteOffset"]?.Value<int>() ?? 0;
+                        var dracoLength = dracoView["byteLength"]?.Value<int>() ?? 0;
+                        if (dracoStart < 0 || dracoLength <= 0 || dracoStart + dracoLength > bin.Length)
+                        {
+                            Debug.WriteLine("[IKEA] Draco bufferView is outside the GLB binary chunk.");
+                            return null;
+                        }
+                        var compressed = new byte[dracoLength];
+                        Buffer.BlockCopy(bin, dracoStart, compressed, 0, dracoLength);
+                        if (!DracoDecoder.TryDecode(compressed, out var decodedPositions,
+                            out var decodedNormals, out var decodedIndices))
+                        {
+                            Debug.WriteLine("[IKEA] Draco mesh decoding failed.");
+                            return null;
+                        }
+                        AppendPrimitive(decodedPositions, decodedNormals, decodedIndices,
+                            positions, normals, indices);
+                        continue;
+                    }
                     var attrs = primitive["attributes"];
                     var posIndex = attrs?["POSITION"]?.Value<int>();
                     if (!posIndex.HasValue) continue;
@@ -225,19 +254,8 @@ namespace HololensIKEA.Services
                         localIndices = new uint[localPositions.Length];
                         for (var i = 0; i < localIndices.Length; i++) localIndices[i] = (uint)i;
                     }
-                    var baseVertex = positions.Count;
-                    positions.AddRange(localPositions);
-                    normals.AddRange(localNormals);
-                    foreach (var index in localIndices)
-                    {
-                        var absolute = (ulong)baseVertex + index;
-                        if (absolute > ushort.MaxValue)
-                        {
-                            Debug.WriteLine("[IKEA] GLB mesh exceeds the renderer's 16-bit index limit.");
-                            return null;
-                        }
-                        indices.Add((ushort)absolute);
-                    }
+                    AppendPrimitive(localPositions, localNormals, localIndices,
+                        positions, normals, indices);
                 }
             }
             if (positions.Count == 0 || indices.Count < 3) return null;
@@ -250,6 +268,22 @@ namespace HololensIKEA.Services
             var scale = maxRange > 20f ? 0.001f : 1f;
             for (var i = 0; i < positions.Count; i++) positions[i] = (positions[i] - center) * scale;
             return new GltfMeshData { Positions = positions.ToArray(), Normals = normals.ToArray(), Indices = indices.ToArray(), BoundsMeters = range * scale, CenterOffset = center * scale };
+        }
+
+        private static void AppendPrimitive(
+            Vector3[] localPositions, Vector3[] localNormals, uint[] localIndices,
+            List<Vector3> positions, List<Vector3> normals, List<ushort> indices)
+        {
+            var baseVertex = positions.Count;
+            positions.AddRange(localPositions);
+            normals.AddRange(localNormals);
+            foreach (var index in localIndices)
+            {
+                var absolute = (ulong)baseVertex + index;
+                if (absolute > ushort.MaxValue)
+                    throw new InvalidOperationException("GLB mesh exceeds the renderer's 16-bit index limit.");
+                indices.Add((ushort)absolute);
+            }
         }
 
         private static Vector3[] ReadVec3(int accessorIndex, JArray accessors, JArray views, byte[] bin)

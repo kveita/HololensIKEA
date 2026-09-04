@@ -92,6 +92,7 @@
     <Compile Include="Services\ProductViewClassifier.cs" />
     <Compile Include="Services\ProductFaceTextureBuilder.cs" />
     <Compile Include="Services\ModelService3D.cs" />
+    <Compile Include="Services\DracoDecoder.cs" />
     <Compile Include="Content\ProductSpriteRenderer.cs" />
     <Compile Include="Content\ProductManipulationHandles.cs" />
     <Compile Include="Content\ProductDimensionLabels.cs" />
@@ -107,6 +108,10 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="bookmarks.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Native\x86\draco_tiny_dec.dll">
+      <Link>draco_tiny_dec.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
