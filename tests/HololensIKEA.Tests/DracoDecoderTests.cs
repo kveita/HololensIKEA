@@ -155,6 +155,7 @@ namespace HololensIKEA.Tests
             WriteF32(bin, 6, 0f); WriteF32(bin, 10, 0f); WriteF32(bin, 14, 0f);
             WriteF32(bin, 18, 1f); WriteF32(bin, 22, 0f); WriteF32(bin, 26, 0f);
             WriteF32(bin, 30, 0f); WriteF32(bin, 34, 1f); WriteF32(bin, 38, 0f);
+            PadTo4(ref bin); // GLB spec requires 4-byte chunk alignment
 
             var glb = BuildGlb(jsonBytes, bin);
             var result = ModelService3D.ParseGlb(glb);
